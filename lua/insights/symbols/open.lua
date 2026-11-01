@@ -17,23 +17,115 @@ local notify = require("insights.util.notify").create("[insights.symbols]")
 
 local M = {}
 
+---@class Insights.SymbolUi
+---@field name string
+---@field available fun(): boolean  Whether the picker is installed (the last backend is always available)
+---@field open fun(entries: table[], title: string)
+
+---The pickers, best first. `default_ui` is the first available one, `M.UIS` and
+---the `:Insights symbols` completion list their names; a new picker is one
+---`M.register_ui` call.
+---@type Insights.SymbolUi[]
+local UI_BACKENDS = {
+  {
+    name = "telescope",
+    available = function()
+      return pcall(require, "telescope")
+    end,
+    open = function(entries, title)
+      require("insights.ui.telescope").open(entries, title)
+    end,
+  },
+  {
+    name = "fzf",
+    available = function()
+      return pcall(require, "fzf-lua")
+    end,
+    open = function(entries, title)
+      require("insights.ui.fzf").open(entries, title)
+    end,
+  },
+  {
+    name = "scratch",
+    available = function()
+      return true
+    end,
+    open = function(entries, title)
+      local lines = {}
+      for _, e in ipairs(entries) do
+        lines[#lines + 1] = string.format(
+          "%s:%d  [%s] %s",
+          e.filename or "?",
+          e.lnum or 0,
+          e.func_type or "?",
+          e.name or "?"
+        )
+      end
+      require("insights.ui.scratch").open(lines, title)
+    end,
+  },
+}
+
 ---@type string[]
 M.SCOPES = { "cwd", "buffer" }
+
+---How each symbol type is scanned: the notice shown first, then the scan.
+---@type table<string, { notice: string, scan: fun(symbols: table, scope: string, rebuild: boolean): table[]|nil, string|nil }>
+local SCANNERS = {
+  functions = {
+    notice = "scanning symbols…",
+    scan = function(symbols, scope, rebuild)
+      return symbols.get(scope, rebuild)
+    end,
+  },
+  tables = {
+    notice = "scanning Lua tables…",
+    scan = function(symbols, scope)
+      return symbols.get_tables(scope)
+    end,
+  },
+  strings = {
+    notice = "scanning Lua strings…",
+    scan = function(symbols, scope)
+      return symbols.get_strings(scope)
+    end,
+  },
+}
 
 ---@type string[]
 M.TYPES = { "functions", "tables", "strings" }
 
 ---@type string[]
-M.UIS = { "telescope", "fzf", "scratch" }
+M.UIS = {}
+for i, b in ipairs(UI_BACKENDS) do
+  M.UIS[i] = b.name
+end
+
+---Add (or replace, by name) a picker backend. It is reachable through
+---`ui = "<name>"`, and becomes the default only when neither telescope nor fzf
+---is installed (`scratch` stays the last resort).
+---@param backend Insights.SymbolUi
+function M.register_ui(backend)
+  vim.validate("name", backend.name, "string")
+  vim.validate("available", backend.available, "function")
+  vim.validate("open", backend.open, "function")
+  for i, b in ipairs(UI_BACKENDS) do
+    if b.name == backend.name then
+      UI_BACKENDS[i] = backend
+      return
+    end
+  end
+  UI_BACKENDS[#UI_BACKENDS + 1] = backend
+  M.UIS[#M.UIS + 1] = backend.name
+end
 
 ---Whichever picker is actually installed, best first.
 ---@return string
 function M.default_ui()
-  if pcall(require, "telescope") then
-    return "telescope"
-  end
-  if pcall(require, "fzf-lua") then
-    return "fzf"
+  for _, b in ipairs(UI_BACKENDS) do
+    if b.name ~= "scratch" and b.available() then
+      return b.name
+    end
   end
   return "scratch"
 end
@@ -44,23 +136,14 @@ end
 ---@param label string
 local function open_picker(entries, ui, label)
   local title = string.format("Symbols (%s) — %d found", label, #entries)
-  if ui == "fzf" then
-    require("insights.ui.fzf").open(entries, title)
-  elseif ui == "scratch" then
-    local lines = {}
-    for _, e in ipairs(entries) do
-      lines[#lines + 1] = string.format(
-        "%s:%d  [%s] %s",
-        e.filename or "?",
-        e.lnum or 0,
-        e.func_type or "?",
-        e.name or "?"
-      )
+  local backend
+  for _, b in ipairs(UI_BACKENDS) do
+    if b.name == ui then
+      backend = b
     end
-    require("insights.ui.scratch").open(lines, title)
-  else
-    require("insights.ui.telescope").open(entries, title)
   end
+  -- An unknown name falls back to telescope, as it always has.
+  (backend or UI_BACKENDS[1]).open(entries, title)
 end
 
 ---Scan for symbols and show them.
@@ -76,18 +159,10 @@ function M.open(opts)
   local ui = opts.ui or M.default_ui()
 
   local symbols = require("insights.symbols")
-  local entries, msg
-
-  if sym_type == "tables" then
-    notify.info("scanning Lua tables…")
-    entries, msg = symbols.get_tables(scope)
-  elseif sym_type == "strings" then
-    notify.info("scanning Lua strings…")
-    entries, msg = symbols.get_strings(scope)
-  else
-    notify.info("scanning symbols…")
-    entries, msg = symbols.get(scope, opts.rebuild == true)
-  end
+  -- An unknown type scans functions, as it always has.
+  local scanner = SCANNERS[sym_type] or SCANNERS.functions
+  notify.info(scanner.notice)
+  local entries, msg = scanner.scan(symbols, scope, opts.rebuild == true)
 
   if msg then
     notify.info(msg)
