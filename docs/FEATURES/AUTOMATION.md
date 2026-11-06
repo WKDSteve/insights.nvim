@@ -70,3 +70,27 @@ see [`../commands.md`](../commands.md#todos).
   `opts.todos.highlight.comments_only` (default `true`),
   `opts.todos.highlight.signs` (default `true`), `opts.todos.keywords` and
   `opts.todos.colors` (merged over the shipped tables)
+
+The shipped `todos.keywords` (a name is dropped with `KEYWORD = false`, one is
+added with `KEYWORD = { icon, color, alt }`):
+
+| Keyword | Colour category | Aliases |
+| --- | --- | --- |
+| `FIX` | `error` | `FIXME`, `BUG`, `FIXIT`, `ISSUE` |
+| `INFO` | `info` | |
+| `DEBUG` | `hint` | |
+| `TODO` | `info` | |
+| `ROADMAP` | `info` | |
+| `AUDIT` | `audit` | `VERIFY`, `REVIEW`, `DOUBLECHECK`, `QC`, `CHECK`, `CHECKIT`, `RECHECK`, `VALIDATE` |
+| `HACK` | `warning` | |
+| `WARN` | `warning` | `WARNING`, `XXX` |
+| `PERF` | `default` | `OPTIM`, `PERFORMANCE`, `OPTIMIZE` |
+| `NOTE` | `hint` | |
+| `TEST` | `test` | `TESTING`, `PASSED`, `FAILED` |
+| `EXP` | `test` | `EXPERIMENT`, `EXPERIMENTAL` |
+| `REF` | `hint` | `REFACTOR`, `REWRITE`, `CLEANUP`, `IMPROVE`, `RESTRUCTURE` |
+| `ADD` | `info` | `EXT`, `NEXT`, `FUTURE`, `ENHANCE`, `HOOK` |
+| `FEAT` | `info` | `FEATURE` |
+| `WATCH` | `warning` | `MONITOR`, `OBSERVE`, `TRACK`, `INSPECT`, `SURVEILLANCE` |
+| `REMOVE` | `warning` | `DELETE`, `DEL`, `UNUSED` |
+| `DEVONLY` | `hint` | `TEMP`, `DEV`, `WIP` |
