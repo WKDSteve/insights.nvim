@@ -7,12 +7,13 @@ return {
   plugin = "insights",
   -- How the spec files are run: "auto" = sniffed per file, "h" = on the project's own TESTS/harness.lua,
   -- "script" = a self-running script in its own process.
-  dialect = "h",
+  dialect = { ["TESTS/sheets_spec.lua"] = "busted", ["*"] = "h" },
   -- Dependencies (directory names) put on the runtimepath: $<NAME>_DIR, .deps/<name>, ../<name>,
   -- stdpath('data')/lazy/<name>.
-  deps = { "lib.nvim" },
+  deps = { "lib.nvim", "testing.nvim" },
   -- One nvim per spec file: health_init_spec runs setup() end to end and leaves global state that
   -- breaks imports_definition_spec when it runs after it (the old fixed order hid that).
+  timeouts = { case_ms = 90000, file_ms = 300000 },
   isolated = "file",
   -- tree_windows_regex_spec returns early (no assertions) off Windows; the old runner passed that.
   assertions = "warn",
@@ -32,6 +33,8 @@ return {
     spawn = {
       -- devserver specs start a throwaway headless nvim as the dev server they track and kill.
       "nvim",
+      "git",
+      "rg",
       -- tree_windows_regex_spec asks PowerShell for the real -match result of the Windows path regex.
       "pwsh",
       -- ps_quote_spec runs the PowerShell commands of compress/tree for real (Windows only).
