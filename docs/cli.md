@@ -21,7 +21,7 @@ Run it from the plugin's folder (or give the script's full path). It needs `lib.
 | `imports` | Every import/require: module, bound name, file, line, language, whether it is external. `--lang=lua,python` narrows (an id or an alias such as `py`; an unknown one is a usage error), `--external` keeps only imports with no source file in the project. | `:Insights imports` |
 | `smells` | Magic numbers and hardcoded constants in the Lua source. `--magic-numbers-only` / `--constants-only`. | `:Insights smells` |
 | `todos` | Annotation comments (`TODO`, `FIX`, ...), case-sensitive, one entry per line. `--keywords=TODO,FIX` narrows. | `:Insights todos` |
-| `metrics` | File, line, comment and annotation statistics of the Lua and documentation files. `--exclude-types` leaves out `@types`/`---@meta` files. | `:Insights metrics` |
+| `metrics` | File, line, comment and annotation statistics of the Lua and documentation files. `@types`/`---@meta` files are left out as in the editor; `--include-types` counts them. | `:Insights metrics` |
 | `unimported` | Components used but not imported, in every file of the configured filetypes (astro, jsx/tsx, vue, svelte; ripgrep's file list when it is there, so `.gitignore` counts). | the `unimported` check on save |
 
 ## Output

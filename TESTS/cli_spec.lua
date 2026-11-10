@@ -37,9 +37,14 @@ return function(H)
     "return M",
   })
   write("lua/proj/util.lua", { "local M = {}", "function M.helper() end", "return M" })
+  write(
+    "lua/proj/@types/init.lua",
+    { "---@meta", "---@class Proj.Thing", "local M = {}", "return M" }
+  )
   write("web/Page.vue", {
     "<template>",
     "  <Header />",
+    "  <MissingGroup />",
     "  <Missing />",
     "</template>",
     "<script>",
@@ -143,16 +148,29 @@ return function(H)
 
     -- metrics: the report as data ---------------------------------------------------------------------
     local metrics = json({ "metrics" })
-    eq(metrics.report.lua.totals.total_files, 2, "two Lua files")
+    eq(
+      metrics.report.lua.totals.total_files,
+      2,
+      "two Lua files: the @types file is left out, as in the editor"
+    )
+    eq(
+      json({ "metrics", "--include-types" }).report.lua.totals.total_files,
+      3,
+      "--include-types counts it"
+    )
     eq(run({ "metrics", "--root=" .. dir }), 0)
     ok(table.concat(out):find("Project File Statistics Report", 1, true), "the text report")
 
     -- unimported: <Missing> is used, not imported; <Header> is imported -----------------------------
     local unimported = json({ "unimported" })
-    eq(unimported.count, 1, vim.inspect(unimported.items))
-    eq(unimported.items[1].component, "Missing")
-    eq(unimported.items[1].file, "web/Page.vue")
-    eq(unimported.items[1].line, 3, "the line of its first use")
+    local missing = {}
+    for _, it in ipairs(unimported.items) do
+      missing[it.component] = it
+    end
+    eq(vim.tbl_count(missing), 2, vim.inspect(unimported.items))
+    eq(missing.Missing.file, "web/Page.vue")
+    eq(missing.Missing.line, 4, "the line of its first use, not the line of <MissingGroup>")
+    eq(missing.MissingGroup.line, 3)
 
     -- todos and scan need ripgrep; on a machine without it they say so with exit 3 ------------------
     if vim.fn.executable("rg") == 1 then

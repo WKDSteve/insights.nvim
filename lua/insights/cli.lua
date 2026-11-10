@@ -43,7 +43,7 @@ options:
             --external     only imports with no source file in the project
   smells:   --magic-numbers-only | --constants-only
   todos:    --keywords=<A,B>   only these keywords (default: all known)
-  metrics:  --exclude-types    leave out `@types`/`---@meta` files
+  metrics:  --include-types    count `@types`/`---@meta` files too (left out by default, as in the editor)
 
 exit: 0 done, 1 --strict and something was found (or an analysis failed), 2 usage, 3 environment (ripgrep missing)]]
 
@@ -67,7 +67,7 @@ end
 ---@field magic_only boolean
 ---@field constants_only boolean
 ---@field keywords? string[]
----@field exclude_types boolean
+---@field include_types boolean
 
 local FLAGS = {
   ["--strict"] = "strict",
@@ -75,7 +75,7 @@ local FLAGS = {
   ["--external"] = "external",
   ["--magic-numbers-only"] = "magic_only",
   ["--constants-only"] = "constants_only",
-  ["--exclude-types"] = "exclude_types",
+  ["--include-types"] = "include_types",
 }
 
 ---@param value string
@@ -105,7 +105,7 @@ function M.parse(argv)
     external = false,
     magic_only = false,
     constants_only = false,
-    exclude_types = false,
+    include_types = false,
   }
   for _, a in ipairs(argv) do
     local key, value = a:match("^(%-%-[%w%-]+)=(.*)$")
@@ -309,11 +309,12 @@ end
 ---@param root string
 ---@return Insights.Cli.Result
 local function run_metrics(opts, root)
-  local result, err = require("insights.metrics").report({
-    root = root,
-    exclude_type_files = opts.exclude_types,
-    show_ratios = opts.exclude_types or nil,
-  })
+  local metrics_opts = { root = root }
+  -- unset: the editor's default (`metrics.exclude_type_files`, true)
+  if opts.include_types then
+    metrics_opts.exclude_type_files = false
+  end
+  local result, err = require("insights.metrics").report(metrics_opts)
   if not result then
     return { err = err, code = 1 }
   end
@@ -376,7 +377,8 @@ local function run_unimported(_, root)
         local file = rel(root, path)
         local lnum = 1
         for i, l in ipairs(lines) do
-          if l:find("<" .. name, 1, true) then
+          -- a frontier, so <Button> is not found in <ButtonGroup>
+          if l:find("<" .. name .. "%f[^%w_]") then
             lnum = i
             break
           end
