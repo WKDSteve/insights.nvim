@@ -363,32 +363,27 @@ local function present(lines, title, cfg)
   require("insights.ui.scratch").open(lines, title)
 end
 
---- Run metrics analysis and open the report.
----@param opts table|string|nil  options table, a root path string, or nil (cwd)
-function M.run(opts)
+---@class Insights.Metrics.Report
+---@field root string        the analyzed folder, normalized
+---@field lines string[]     the report, as the scratch buffer shows it
+---@field state? MetricsState      the Lua part, when Lua was analyzed and found
+---@field misc_state? table        the documentation part (md/txt/json), when analyzed and found
+
+--- Analyze a folder and build the report, without showing it. What `run` shows, and what the command line prints.
+---@param opts table|string|nil  options table, a root path string, or nil (cwd); `single_file` is not handled here
+---@return Insights.Metrics.Report|nil report
+---@return string|nil err  "not a directory: <root>" or "no Lua or documentation files found in <root>"
+function M.report(opts)
   if opts == nil or type(opts) == "string" then
     opts = { root = opts }
   end
   local cfg = config.get().metrics or {}
   local o = resolve(opts, cfg)
 
-  -- Single-file / current-buffer mode.
-  if o.single_file and o.single_file ~= "" then
-    present(
-      M.analyze_single(o.single_file),
-      "Metrics — " .. vim.fn.fnamemodify(o.single_file, ":t"),
-      cfg
-    )
-    return
-  end
-
   local root = M.normalize_dir((o.root and o.root ~= "" and o.root) or vim.fn.getcwd())
   if vim.fn.isdirectory(root) == 0 then
-    notify.warn("not a directory: " .. root)
-    return
+    return nil, "not a directory: " .. root
   end
-
-  notify.info("analyzing " .. root .. " …")
 
   local state
   local lua_ok = false
@@ -403,8 +398,7 @@ function M.run(opts)
   end
 
   if not lua_ok and (not misc_state or misc.is_empty(misc_state)) then
-    notify.warn("no Lua or documentation files found in " .. root)
-    return
+    return nil, "no Lua or documentation files found in " .. root
   end
 
   local lines = {
@@ -434,7 +428,47 @@ function M.run(opts)
     end
   end
 
-  present(lines, "Metrics — " .. vim.fn.fnamemodify(root, ":t"), cfg)
+  return {
+    root = root,
+    lines = lines,
+    state = lua_ok and state or nil,
+    misc_state = (misc_state and not misc.is_empty(misc_state)) and misc_state or nil,
+  },
+    nil
+end
+
+--- Run metrics analysis and open the report.
+---@param opts table|string|nil  options table, a root path string, or nil (cwd)
+function M.run(opts)
+  if opts == nil or type(opts) == "string" then
+    opts = { root = opts }
+  end
+  local cfg = config.get().metrics or {}
+
+  -- Single-file / current-buffer mode.
+  if opts.single_file and opts.single_file ~= "" then
+    present(
+      M.analyze_single(opts.single_file),
+      "Metrics — " .. vim.fn.fnamemodify(opts.single_file, ":t"),
+      cfg
+    )
+    return
+  end
+
+  local root = M.normalize_dir((opts.root and opts.root ~= "" and opts.root) or vim.fn.getcwd())
+  if vim.fn.isdirectory(root) == 0 then
+    notify.warn("not a directory: " .. root)
+    return
+  end
+
+  notify.info("analyzing " .. root .. " …")
+
+  local result, err = M.report(opts)
+  if not result then
+    notify.warn(err)
+    return
+  end
+  present(result.lines, "Metrics — " .. vim.fn.fnamemodify(result.root, ":t"), cfg)
 end
 
 return M

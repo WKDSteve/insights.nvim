@@ -77,6 +77,7 @@ each page answers.
 - [What you get with the defaults](docs/what-you-get.md) — the full `:Insights` surface at a glance.
 - [All options](docs/configuration.md) — every `setup()` option and its default.
 - [Commands](docs/commands.md) — the full subcommand reference, flags, and symbol types.
+- [Without the editor](docs/cli.md) — `scripts/insights.lua` runs scan, imports, smells, todos, metrics and unimported for CI and hooks, as text or JSON.
 - [Bindings cheatsheet](docs/BINDINGS.md) — every keymap, user command and autocmd the plugin registers.
 
 ### What it does

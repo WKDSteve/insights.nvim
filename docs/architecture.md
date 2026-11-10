@@ -3,6 +3,7 @@
 ```
 lua/insights/
   init.lua              setup() + public Lua façade
+  cli.lua               the commands of scripts/insights.lua (headless: scan, imports, smells, todos, metrics, unimported)
   config/
     init.lua            merges user opts over DEFAULTS
     DEFAULTS.lua         plugin-side default configuration

@@ -61,6 +61,26 @@ local function is_bound(lines, name)
   return false
 end
 
+---Component tags used in `lines` without a matching import or local definition (`unimported.ignore` left out).
+---The check itself, on text: `check_buf` hands it a buffer, the command line a file.
+---@param lines string[]
+---@return string[] missing
+function M.check_lines(lines)
+  local cfg = require("insights.config").get().unimported or {}
+  local ignore = {}
+  for _, name in ipairs(cfg.ignore or {}) do
+    ignore[name] = true
+  end
+
+  local missing = {}
+  for _, name in ipairs(used_components(lines)) do
+    if not ignore[name] and not is_bound(lines, name) then
+      missing[#missing + 1] = name
+    end
+  end
+  return missing
+end
+
 ---Component tags used in `bufnr` without a matching import or local definition.
 ---@param bufnr integer|nil  defaults to the current buffer
 ---@return string[] missing
@@ -69,21 +89,7 @@ function M.check_buf(bufnr)
   if not api.nvim_buf_is_valid(bufnr) then
     return {}
   end
-
-  local cfg = require("insights.config").get().unimported or {}
-  local ignore = {}
-  for _, name in ipairs(cfg.ignore or {}) do
-    ignore[name] = true
-  end
-
-  local lines = api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local missing = {}
-  for _, name in ipairs(used_components(lines)) do
-    if not ignore[name] and not is_bound(lines, name) then
-      missing[#missing + 1] = name
-    end
-  end
-  return missing
+  return M.check_lines(api.nvim_buf_get_lines(bufnr, 0, -1, false))
 end
 
 ---Check `bufnr` and report the result.
