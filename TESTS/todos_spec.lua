@@ -183,6 +183,8 @@ return function(H)
       "lua/z.lua:2:4:-- TODO: last file first, to test the sort",
       "lua/a.lua:9:1:-- BUG: alias hit",
       "lua/a.lua:4:1:-- FIX: keyword hit",
+      -- rg --vimgrep prints a line once per match: a second match on line 4 is not a second entry
+      "lua/a.lua:4:4:-- FIX: keyword hit",
       "E:\\repos\\p\\lua\\w.lua:7:3:  -- REFACTOR later",
       "lua/a.lua:5:1:local TODO_COUNT = 1 -- no word boundary match on TODO_COUNT",
       "lua/a.lua:6:1:-- NOPE: not a keyword, rg would not have returned it but be safe",

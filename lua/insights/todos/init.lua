@@ -299,10 +299,15 @@ function M.scan(opts)
   -- every call regardless.
   local re = M.compiled_pattern(words)
   local entries = {}
+  -- `--vimgrep` prints a line once per match: "TODO ... FIX" on one line came back twice. One entry per line, the
+  -- first match's column (rg reports a line's matches in order).
+  local seen = {}
   if re then
     for _, line in ipairs(lines) do
       local hit = M.parse_vimgrep(line)
-      if hit then
+      local key = hit and (hit.filename .. ":" .. hit.lnum)
+      if hit and not seen[key] then
+        seen[key] = true
         local s, e = re:match_str(hit.text)
         local word = s and hit.text:sub(s + 1, e) or nil
         local info = word and M.lookup(word)
