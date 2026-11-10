@@ -71,4 +71,22 @@ return {
       },
     },
   },
+  -- The pipeline is derived (`scripts/test.sh ci list`). The GitHub workflow is generated from `workflow`:
+  -- `testing init --workflow=public --force` writes it (testing.nvim docs/WORKFLOW-CI.md), the step
+  -- workflow-in-sync checks it.
+  ci = {
+    workflow = {
+      name = "insights.nvim",
+      layout = "hosted",
+      -- the steps that depend on the platform: the windows and macOS legs run only these
+      platform = { "suite", "conformance" },
+      packages = { { name = "ripgrep", why = "scan_rg_spec and symbols_index_spec scan with rg" } },
+      publish = { why = "gitsuite.nvim checks insights.nvim out at ci-verified" },
+      -- `testing ci land`: a check branch ci/** runs the hosted legs, main moves only once it is green there
+      land = true,
+    },
+    steps = {
+      ["workflow-in-sync"] = { preset = "workflow-in-sync" },
+    },
+  },
 }
