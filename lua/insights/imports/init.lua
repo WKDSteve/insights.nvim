@@ -388,6 +388,13 @@ local function resolve_lang_token(tok)
   return LANG_ALIASES[tok]
 end
 
+--- The language id a filter token names (an id like `python` or an alias like `py`), or nil when it names none.
+---@param tok string
+---@return string|nil
+function M.lang_id(tok)
+  return resolve_lang_token(tok)
+end
+
 ---@internal
 --- Split filter tokens into a language-id set and the remaining module-prefix
 --- tokens, so `:Insights imports python lib` scopes to Python AND the "lib"

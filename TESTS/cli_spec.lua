@@ -132,6 +132,14 @@ return function(H)
     eq(found.line, 1)
     eq(found.lang, "lua")
     eq(found.external, false, "proj.util has a source file in the project")
+    eq(json({ "imports", "--lang=lua" }).count, imports.count, "--lang=lua keeps the Lua imports")
+    eq(json({ "imports", "--lang=python" }).count, 0, "--lang=python: there is no Python file")
+    eq(
+      run({ "imports", "--lang=klingon", "--root=" .. dir }),
+      2,
+      "an unknown language is a usage error"
+    )
+    ok(table.concat(err):find("no known language", 1, true), table.concat(err))
 
     -- metrics: the report as data ---------------------------------------------------------------------
     local metrics = json({ "metrics" })

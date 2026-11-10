@@ -198,14 +198,15 @@ end
 ---@return Insights.Cli.Result
 local function run_imports(opts, root)
   local imports = require("insights.imports")
-  local data = imports.scan_cwd()
-  local filters = { langs = {} }
-  if opts.langs then
-    for _, l in ipairs(opts.langs) do
-      filters.langs[l] = true
+  -- filtered_entries reads a token that is no language as a module prefix: an unknown --lang must not narrow to
+  -- nothing in silence.
+  for _, l in ipairs(opts.langs or {}) do
+    if not imports.lang_id(l) then
+      return { err = ("--lang: '%s' is no known language"):format(l), code = 2 }
     end
   end
-  local entries = imports.filtered_entries(data, opts.langs and filters or nil)
+  local data = imports.scan_cwd()
+  local entries = imports.filtered_entries(data, opts.langs)
   local items = {}
   for _, e in ipairs(entries) do
     if not opts.external or e.external then

@@ -18,7 +18,7 @@ Run it from the plugin's folder (or give the script's full path). It needs `lib.
 | Command | What it reports | Same as |
 | --- | --- | --- |
 | `scan` | The symbol index: name, kind, file, line (Lua through Tree-sitter when the parser is there). `--rebuild` rebuilds the cache first. | `:Insights symbols` |
-| `imports` | Every import/require: module, bound name, file, line, language, whether it is external. `--lang=lua,python` narrows, `--external` keeps only imports with no source file in the project. | `:Insights imports` |
+| `imports` | Every import/require: module, bound name, file, line, language, whether it is external. `--lang=lua,python` narrows (an id or an alias such as `py`; an unknown one is a usage error), `--external` keeps only imports with no source file in the project. | `:Insights imports` |
 | `smells` | Magic numbers and hardcoded constants in the Lua source. `--magic-numbers-only` / `--constants-only`. | `:Insights smells` |
 | `todos` | Annotation comments (`TODO`, `FIX`, ...), case-sensitive, one entry per line. `--keywords=TODO,FIX` narrows. | `:Insights todos` |
 | `metrics` | File, line, comment and annotation statistics of the Lua and documentation files. `--exclude-types` leaves out `@types`/`---@meta` files. | `:Insights metrics` |
@@ -60,5 +60,5 @@ run.
 | --- | --- |
 | 0 | Done (findings alone do not change it, unless `--strict`). |
 | 1 | `--strict` and something was found, or an analysis failed (for example `metrics` found no file to analyze). |
-| 2 | Usage: an unknown command or option, a root that is no folder, a `--keywords` filter with no known keyword. |
+| 2 | Usage: an unknown command or option, a root that is no folder, a `--keywords` filter with no known keyword, an unknown `--lang`. |
 | 3 | The environment: ripgrep missing for `scan` or `todos`, `lib.nvim` not found, or the analysis raised. |
