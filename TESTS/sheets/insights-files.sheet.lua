@@ -3,6 +3,7 @@
 -- repository with a real merge conflict for `:Insights conflicts`.
 return {
   id = "insights.files",
+  feature = "insights.project",
   title = ":Insights cache, tree, clipboard, fileinfo, compress, devserver and conflicts",
   task = "insights.nvim/testblatt-bindings-checkliste",
   sizes = { { rows = 40, cols = 120 } },

@@ -4,6 +4,7 @@
 -- Not here: the pickers behind `--ui` and the look of the report buffers.
 return {
   id = "insights.reports",
+  feature = "insights.imports",
   title = ":Insights count, imports, smells, todos, metrics, unimported and symbols",
   task = "insights.nvim/testblatt-bindings-checkliste",
   sizes = { { rows = 40, cols = 120 } },
