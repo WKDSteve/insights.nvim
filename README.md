@@ -108,3 +108,21 @@ each page answers.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 insights.nvim is released under the [MIT License](https://opensource.org/licenses/MIT).
+
+<!-- connections:begin (written by the app-icons tool of the workshop; change integrations.json there, not this block) -->
+## Connections
+
+![insights.nvim: what it uses and what uses it](assets/graphs/insights.nvim.png)
+
+**Uses**
+
+- [hover.nvim](https://github.com/WKDSteve/hover.nvim): insights.nvim registers a preview with hover.nvim (`hover.registry`) when it is installed. ([picture](assets/graphs/pair/insights.nvim--hover.nvim.png))
+- [images.nvim](https://github.com/WKDSteve/images.nvim): images.nvim shows the import graph of `:Insights imports graph` inline; without it the PNG is only written. ([picture](assets/graphs/pair/insights.nvim--images.nvim.png))
+- [pdfport.nvim](https://github.com/WKDSteve/pdfport.nvim): insights.nvim can write its metrics as a PDF (`metrics.output_file` ending in .pdf) through pdfport.nvim. ([picture](assets/graphs/pair/insights.nvim--pdfport.nvim.png))
+- [ui.nvim](https://github.com/WKDSteve/ui.nvim): The dev server of insights.nvim is built on the kit of ui.nvim (`ui.kit`). ([picture](assets/graphs/pair/insights.nvim--ui.nvim.png))
+- [lib.nvim](https://github.com/WKDSteve/lib.nvim): the shared base of the plugins.
+
+**Used by**
+
+- [gitsuite.nvim](https://github.com/WKDSteve/gitsuite.nvim): gitsuite.nvim lists conflicts with the conflict finder of insights.nvim (`insights.conflicts`) when it is installed. ([picture](assets/graphs/pair/gitsuite.nvim--insights.nvim.png))
+<!-- connections:end -->
