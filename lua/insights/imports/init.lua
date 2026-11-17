@@ -20,6 +20,7 @@ local config = require("insights.config")
 local rg = require("insights.scan.rg")
 local langs = require("insights.imports.langs")
 local globbable = require("lib.nvim.fs.globbable")
+local walker = require("lib.nvim.fs.collect_recursive")
 
 -- Optional: the async cwd scan and `unused`'s re-read pass both walk every
 -- source file — a multi-second job on a big tree. `symbols/rg_index.lua`
@@ -89,7 +90,8 @@ end
 ---@param ext string
 ---@return string[]
 local function glob_files(cwd, ext)
-  local files = vim.fn.globpath(globbable(cwd), "**/*." .. ext, false, true)
+  -- lib walker, not globpath "**": that walked node_modules and took seconds on Windows (2026-11-17)
+  local files = walker.files_with_ext(globbable(cwd), { ext })
   local todo = {}
   for _, path in ipairs(files) do
     if not skip_path(path) then

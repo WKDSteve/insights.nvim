@@ -9,6 +9,7 @@ local M = {}
 
 local notify = require("insights.util.notify").create("[insights.symbols.ts_lua]")
 local globbable = require("lib.nvim.fs.globbable")
+local walker = require("lib.nvim.fs.collect_recursive")
 local api = vim.api
 local ts = vim.treesitter
 
@@ -168,7 +169,8 @@ end
 ---@return table[]
 function M.scan_cwd()
   local cwd = vim.fn.getcwd()
-  local files = vim.fn.globpath(globbable(cwd), "**/*.lua", false, true)
+  -- lib walker, not globpath "**": 881 ms -> 63 ms on lib.nvim (2026-11-17)
+  local files = walker.files_with_ext(globbable(cwd), { "lua" })
 
   local ignore = { "/%.git/", "/node_modules/", "/%.cache/", "/build/", "/dist/", "/target/" }
   local filtered = {}

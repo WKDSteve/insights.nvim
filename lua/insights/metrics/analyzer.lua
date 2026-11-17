@@ -3,6 +3,7 @@
 local M = {}
 
 local globbable = require("lib.nvim.fs.globbable")
+local walker = require("lib.nvim.fs.collect_recursive")
 
 ---@type table<string, boolean>  ignored directory names (matched per segment)
 local IGNORE_DIRS = {
@@ -50,7 +51,11 @@ end
 function M.list_files(dir, pattern)
   local files = {}
   dir = globbable(dir)
-  local found = vim.fn.glob(dir .. "/**/" .. pattern, false, true)
+  -- A plain "*.<ext>" goes through the lib walker (glob "**" walked node_modules and took seconds on
+  -- Windows, measured 2026-11-17); any other pattern keeps the glob.
+  local ext = pattern:match("^%*%.([%w_]+)$")
+  local found = ext and walker.files_with_ext(dir, { ext })
+    or vim.fn.glob(dir .. "/**/" .. pattern, false, true)
   for _, f in ipairs(found) do
     f = f:gsub("\\", "/")
     if not should_ignore(f:sub(#dir + 2)) then
