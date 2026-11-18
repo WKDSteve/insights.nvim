@@ -10,6 +10,57 @@ local globbable = require("lib.nvim.fs.globbable")
 local walker = require("lib.nvim.fs.collect_recursive")
 local api = vim.api
 local ts = vim.treesitter
+local file_source = require("insights.symbols.source")
+
+---The matches of one parsed Lua source; the work of `scan_buffer` and `scan_text`.
+---@param ok_p boolean     whether making the parser succeeded
+---@param parser_obj any   the parser, or the error
+---@param source integer|string the buffer, or the text the parser was made from (`get_node_text` reads it)
+---@return table[]
+---@return string|nil err
+local function scan_parsed(ok_p, parser_obj, source)
+  if not ok_p or not parser_obj then
+    local reason = (not ok_p) and tostring(parser_obj) or "no parser for this source"
+    return {}, "could not get Lua Tree-sitter parser: " .. reason
+  end
+
+  local ok_t, trees = pcall(parser_obj.parse, parser_obj)
+  if not ok_t or not trees or #trees == 0 then
+    local reason = (not ok_t) and tostring(trees) or "no syntax tree produced"
+    return {}, "Tree-sitter parse failed: " .. reason
+  end
+
+  local root = trees[1]:root()
+
+  local ok_q, query = pcall(ts.query.parse, "lua", [[ (string) @str ]])
+  if not ok_q or not query then
+    local reason = (not ok_q) and tostring(query) or "query returned nothing"
+    return {}, "Tree-sitter query failed: " .. reason
+  end
+
+  local seen = {}
+  local result = {}
+
+  for _, node in query:iter_captures(root, source) do
+    local text = ts.get_node_text(node, source)
+    if text and not seen[text] then
+      seen[text] = true
+      local row, col = node:range()
+      result[#result + 1] = {
+        name = text,
+        lnum = row + 1,
+        col = col,
+        filename = nil,
+        func_type = "string",
+      }
+    end
+  end
+
+  table.sort(result, function(a, b)
+    return a.name < b.name
+  end)
+  return result, nil
+end
 
 ---Scan one buffer for Lua string literals.
 ---
@@ -34,47 +85,17 @@ function M.scan_buffer(bufnr)
   end
 
   local ok_p, parser_obj = pcall(ts.get_parser, bufnr, "lua")
-  if not ok_p or not parser_obj then
-    local reason = (not ok_p) and tostring(parser_obj) or "no parser for this buffer"
-    return {}, "could not get Lua Tree-sitter parser: " .. reason
-  end
+  return scan_parsed(ok_p, parser_obj, bufnr)
+end
 
-  local ok_t, trees = pcall(parser_obj.parse, parser_obj)
-  if not ok_t or not trees or #trees == 0 then
-    local reason = (not ok_t) and tostring(trees) or "no syntax tree produced"
-    return {}, "Tree-sitter parse failed: " .. reason
-  end
-
-  local root = trees[1]:root()
-
-  local ok_q, query = pcall(ts.query.parse, "lua", [[ (string) @str ]])
-  if not ok_q or not query then
-    local reason = (not ok_q) and tostring(query) or "query returned nothing"
-    return {}, "Tree-sitter query failed: " .. reason
-  end
-
-  local seen = {}
-  local result = {}
-
-  for _, node in query:iter_captures(root, bufnr) do
-    local text = ts.get_node_text(node, bufnr)
-    if text and not seen[text] then
-      seen[text] = true
-      local row, col = node:range()
-      result[#result + 1] = {
-        name = text,
-        lnum = row + 1,
-        col = col,
-        filename = nil,
-        func_type = "string",
-      }
-    end
-  end
-
-  table.sort(result, function(a, b)
-    return a.name < b.name
-  end)
-  return result, nil
+---The same for the text of a Lua file, parsed as a string: no buffer is made, so no FileType autocmds run
+---(ftplugins, an LSP client) and nothing stays loaded (`insights.symbols.source`).
+---@param text string
+---@return table[]
+---@return string|nil err
+function M.scan_text(text)
+  local ok_p, parser_obj = pcall(ts.get_string_parser, text, "lua")
+  return scan_parsed(ok_p, parser_obj, text)
 end
 
 ---Scan all .lua files in cwd.
@@ -116,10 +137,10 @@ function M.scan_cwd()
 
   local all = {}
   local errors = {}
+  -- a loaded file from its buffer, every other one as text: no bufload (insights.symbols.source)
+  local loaded = file_source.loaded_buffers()
   for _, path in ipairs(filtered) do
-    local bufnr = vim.fn.bufadd(path)
-    vim.fn.bufload(bufnr)
-    local matches, err = M.scan_buffer(bufnr)
+    local matches, err = file_source.scan(path, loaded, M)
     if err then
       errors[#errors + 1] = err
     end

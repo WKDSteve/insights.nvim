@@ -15,13 +15,9 @@
 -- string in the broken case and `nil` in the empty-but-fine one; see the
 -- "internal Tree-sitter failures surface `err`" block below.
 --
--- `scan_cwd`'s file walk itself is not exercised: it loads every .lua file
--- under the working directory into a buffer, which on this repository alone
--- is ~50 files -- a measurement of the machine, not of the scanner. The
--- per-buffer scan it calls in a loop is covered exhaustively instead. Its
--- ignore-list filter is a different matter -- real branching logic, small
--- enough to drive against an actual (tiny) fixture tree -- and has its own
--- block below.
+-- `scan_cwd` runs on small fixture trees only (its speed on a larger tree is
+-- TESTS/sheets/symbols-cwd-speed.sheet.lua): the ignore list, and where it
+-- reads a file from (the text, or the buffer of a loaded file).
 
 return function(H)
   local ts_lua = require("insights.symbols.ts_lua")
@@ -250,12 +246,10 @@ return function(H)
     local original_cwd = vim.fn.getcwd()
     vim.fn.chdir(dir)
 
-    -- `scan_cwd` loads each file with `bufadd`/`bufload` and gates on
-    -- `filetype == "lua"`, same as `scan_buffer` above -- but unlike the
-    -- fixtures above, it never sets that itself; it relies on Neovim's own
-    -- ftdetect, which `-u NONE` does not switch on. A real user's Neovim
-    -- always has this on, so enabling it here is fixture setup, not a
-    -- workaround for the module under test.
+    -- A file that is loaded in a buffer is scanned from it, gated on
+    -- `filetype == "lua"` like `scan_buffer` above; that relies on Neovim's
+    -- own ftdetect, which `-u NONE` does not switch on. A real user's Neovim
+    -- always has this on, so enabling it here is fixture setup.
     vim.cmd("filetype on")
 
     local ok_scan, err_scan = pcall(function()
@@ -272,6 +266,50 @@ return function(H)
       H.eq(by_string['"ignored_string_literal"'], nil, "and a string under node_modules/ is not")
     end)
 
+    vim.fn.chdir(original_cwd)
+    cleanup()
+
+    if not ok_scan then
+      error(err_scan, 0)
+    end
+  end
+
+  -- ── scan_cwd reads files as text, a loaded file from its buffer ──────────
+  -- PERF regression: `scan_cwd` loaded every file with `bufadd`/`bufload`, so each one ran the FileType
+  -- autocmds (ftplugins, an LSP client attaching) and stayed loaded: 2 s for 200 files in a test sheet
+  -- (TESTS/sheets/symbols-cwd-speed.sheet.lua). Now it parses the text (`scan_text`) and makes no buffer;
+  -- a file that is loaded is still read from its buffer, so its unsaved changes count.
+  do
+    local dir, cleanup = H.fixture("ts-scan-cwd-text")
+    vim.fn.writefile({
+      "local function on_disk_fn() end",
+      "local on_disk_table = {}",
+      'local s = "on_disk_string"',
+    }, dir .. "/disk.lua")
+    vim.fn.writefile({ "local function saved_fn() end" }, dir .. "/open.lua")
+
+    local original_cwd = vim.fn.getcwd()
+    vim.fn.chdir(dir)
+    vim.cmd("filetype on")
+    vim.cmd("silent edit " .. vim.fn.fnameescape(dir .. "/open.lua"))
+    local open_buf = vim.api.nvim_get_current_buf()
+    vim.api.nvim_buf_set_lines(open_buf, 0, -1, false, { "local function unsaved_fn() end" })
+
+    local ok_scan, err_scan = pcall(function()
+      local before = #vim.api.nvim_list_bufs()
+      local by_lua = by_name(ts_lua.scan_cwd())
+      H.ok(by_lua.on_disk_fn, "ts_lua: a file in no buffer is scanned from its text")
+      H.ok(by_lua.unsaved_fn, "a loaded file is scanned from its buffer, unsaved changes included")
+      H.eq(by_lua.saved_fn, nil, "and not from what is on disk")
+      H.ok(by_name(ts_tables.scan_cwd()).on_disk_table, "ts_lua_tables: a table from the text")
+      H.ok(
+        by_name(ts_strings.scan_cwd())['"on_disk_string"'],
+        "ts_lua_strings: a string from the text"
+      )
+      H.eq(#vim.api.nvim_list_bufs(), before, "the three scans made no buffer")
+    end)
+
+    vim.api.nvim_buf_delete(open_buf, { force = true })
     vim.fn.chdir(original_cwd)
     cleanup()
 

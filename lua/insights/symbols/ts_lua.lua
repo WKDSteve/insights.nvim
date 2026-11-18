@@ -12,6 +12,7 @@ local globbable = require("lib.nvim.fs.globbable")
 local walker = require("lib.nvim.fs.collect_recursive")
 local api = vim.api
 local ts = vim.treesitter
+local file_source = require("insights.symbols.source")
 
 ---@internal
 ---First named child of `node` with the given type. `assignment_statement`
@@ -50,30 +51,15 @@ end
 ---@field filename string? Path of the file it was found in, stamped after the scan.
 ---@field func_type string? Which shape the definition had; the string and table scanners set it, this one does not (the picker shows "?" for those).
 
----Scan one buffer for Lua function definitions.
----
----An unscannable buffer (invalid, deleted, or not filetype=lua) legitimately
----has no matches -- `err` stays nil. A Tree-sitter failure on an otherwise
----scannable Lua buffer (no parser installed, parse raised) is a different
----thing: it also has zero matches, but it did not determine that there are
----none, so `err` is set (ERR-11) instead of answering the same bare `{}` a
----buffer with genuinely no function definitions would.
----@param bufnr integer
----@return Insights.Symbols.Match[]
+---The matches of one parsed Lua source; the work of `scan_buffer` and `scan_text`.
+---@param ok_p boolean     whether making the parser succeeded
+---@param parser_obj any   the parser, or the error
+---@param source integer|string the buffer, or the text the parser was made from (`get_node_text` reads it)
+---@return table[]
 ---@return string|nil err
-function M.scan_buffer(bufnr)
-  if not api.nvim_buf_is_valid(bufnr) then
-    return {}
-  end
-
-  local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = bufnr })
-  if not ok_ft or ft ~= "lua" then
-    return {}
-  end
-
-  local ok_p, parser_obj = pcall(ts.get_parser, bufnr, "lua")
+local function scan_parsed(ok_p, parser_obj, source)
   if not ok_p or not parser_obj then
-    local reason = (not ok_p) and tostring(parser_obj) or "no parser for this buffer"
+    local reason = (not ok_p) and tostring(parser_obj) or "no parser for this source"
     return {}, "could not get Lua Tree-sitter parser: " .. reason
   end
 
@@ -93,7 +79,7 @@ function M.scan_buffer(bufnr)
     if t == "function_declaration" then
       local name_nodes = node:field("name")
       if name_nodes and #name_nodes > 0 then
-        local name = ts.get_node_text(name_nodes[1], bufnr)
+        local name = ts.get_node_text(name_nodes[1], source)
         if name and not seen[name] then
           seen[name] = true
           local row, col = name_nodes[1]:range()
@@ -125,7 +111,7 @@ function M.scan_buffer(bufnr)
             -- unrelated `M.foo = function() end` / `N.foo = function() end`
             -- definitions in different files would collide under `seen` and one
             -- would silently vanish from the report.
-            local name = ts.get_node_text(vn, bufnr)
+            local name = ts.get_node_text(vn, source)
             if name and not seen[name] then
               seen[name] = true
               local row, col = vn:range()
@@ -141,7 +127,7 @@ function M.scan_buffer(bufnr)
       local fv = node:field("value")
       if fn and fv and #fn > 0 and #fv > 0 then
         if fv[1]:type() == "function_definition" then
-          local name = ts.get_node_text(fn[1], bufnr)
+          local name = ts.get_node_text(fn[1], source)
           if name and not seen[name] then
             seen[name] = true
             local row, col = fn[1]:range()
@@ -162,6 +148,41 @@ function M.scan_buffer(bufnr)
     return a.name < b.name
   end)
   return result, nil
+end
+
+---Scan one buffer for Lua function definitions.
+---
+---An unscannable buffer (invalid, deleted, or not filetype=lua) legitimately
+---has no matches -- `err` stays nil. A Tree-sitter failure on an otherwise
+---scannable Lua buffer (no parser installed, parse raised) is a different
+---thing: it also has zero matches, but it did not determine that there are
+---none, so `err` is set (ERR-11) instead of answering the same bare `{}` a
+---buffer with genuinely no function definitions would.
+---@param bufnr integer
+---@return Insights.Symbols.Match[]
+---@return string|nil err
+function M.scan_buffer(bufnr)
+  if not api.nvim_buf_is_valid(bufnr) then
+    return {}
+  end
+
+  local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = bufnr })
+  if not ok_ft or ft ~= "lua" then
+    return {}
+  end
+
+  local ok_p, parser_obj = pcall(ts.get_parser, bufnr, "lua")
+  return scan_parsed(ok_p, parser_obj, bufnr)
+end
+
+---The same for the text of a Lua file, parsed as a string: no buffer is made, so no FileType autocmds run
+---(ftplugins, an LSP client) and nothing stays loaded (`insights.symbols.source`).
+---@param text string
+---@return table[]
+---@return string|nil err
+function M.scan_text(text)
+  local ok_p, parser_obj = pcall(ts.get_string_parser, text, "lua")
+  return scan_parsed(ok_p, parser_obj, text)
 end
 
 ---Scan all .lua files in cwd using Tree-sitter.
@@ -204,10 +225,10 @@ function M.scan_cwd()
 
   local all = {}
   local errors = {}
+  -- a loaded file from its buffer, every other one as text: no bufload (insights.symbols.source)
+  local loaded = file_source.loaded_buffers()
   for _, path in ipairs(filtered) do
-    local bufnr = vim.fn.bufadd(path)
-    vim.fn.bufload(bufnr)
-    local matches, err = M.scan_buffer(bufnr)
+    local matches, err = file_source.scan(path, loaded, M)
     if err then
       errors[#errors + 1] = err
     end

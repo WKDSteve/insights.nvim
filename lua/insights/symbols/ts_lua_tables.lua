@@ -10,6 +10,7 @@ local globbable = require("lib.nvim.fs.globbable")
 local walker = require("lib.nvim.fs.collect_recursive")
 local api = vim.api
 local ts = vim.treesitter
+local file_source = require("insights.symbols.source")
 
 ---@internal
 ---First named child of `node` with the given type. `assignment_statement`
@@ -70,31 +71,15 @@ local function build_table_path(node, bufnr)
   return #parts > 0 and table.concat(parts, ".") or nil
 end
 
----Scan one buffer for Lua table definitions.
----
----An unscannable buffer (invalid, deleted, or not filetype=lua) legitimately
----has no matches -- `err` stays nil. A Tree-sitter failure on an otherwise
----scannable Lua buffer (no parser installed, parse raised, or the query below
----names a node this grammar build does not have) is a different thing: it
----also has zero matches, but it did not determine that there are none, so
----`err` is set (ERR-11) instead of answering the same bare `{}` a buffer with
----genuinely no table constructors would.
----@param bufnr integer
----@return Insights.Symbols.Match[]
+---The matches of one parsed Lua source; the work of `scan_buffer` and `scan_text`.
+---@param ok_p boolean     whether making the parser succeeded
+---@param parser_obj any   the parser, or the error
+---@param source integer|string the buffer, or the text the parser was made from (`get_node_text` reads it)
+---@return table[]
 ---@return string|nil err
-function M.scan_buffer(bufnr)
-  if not api.nvim_buf_is_valid(bufnr) then
-    return {}
-  end
-
-  local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = bufnr })
-  if not ok_ft or ft ~= "lua" then
-    return {}
-  end
-
-  local ok_p, parser_obj = pcall(ts.get_parser, bufnr, "lua")
+local function scan_parsed(ok_p, parser_obj, source)
   if not ok_p or not parser_obj then
-    local reason = (not ok_p) and tostring(parser_obj) or "no parser for this buffer"
+    local reason = (not ok_p) and tostring(parser_obj) or "no parser for this source"
     return {}, "could not get Lua Tree-sitter parser: " .. reason
   end
 
@@ -138,17 +123,17 @@ function M.scan_buffer(bufnr)
   local seen = {}
   local result = {}
 
-  for id, node in query:iter_captures(root, bufnr) do
+  for id, node in query:iter_captures(root, source) do
     local capture = query.captures[id]
     local row, col = node:range()
     local name
 
     if capture == "name" then
-      name = ts.get_node_text(node, bufnr)
+      name = ts.get_node_text(node, source)
     elseif capture == "path" then
-      name = build_table_path(node, bufnr)
+      name = build_table_path(node, source)
     elseif capture == "field_name" then
-      local raw = ts.get_node_text(node, bufnr)
+      local raw = ts.get_node_text(node, source)
       -- Try to prefix with parent assignment variable for context
       local par = node:parent()
       while par and par:type() ~= "assignment_statement" do
@@ -158,7 +143,7 @@ function M.scan_buffer(bufnr)
       if par then
         local vl = child_of_type(par, "variable_list")
         if vl then
-          ctx = ts.get_node_text(vl, bufnr)
+          ctx = ts.get_node_text(vl, source)
         end
       end
       name = ctx and (ctx .. "." .. raw) or raw
@@ -180,6 +165,42 @@ function M.scan_buffer(bufnr)
     return a.name < b.name
   end)
   return result, nil
+end
+
+---Scan one buffer for Lua table definitions.
+---
+---An unscannable buffer (invalid, deleted, or not filetype=lua) legitimately
+---has no matches -- `err` stays nil. A Tree-sitter failure on an otherwise
+---scannable Lua buffer (no parser installed, parse raised, or the query below
+---names a node this grammar build does not have) is a different thing: it
+---also has zero matches, but it did not determine that there are none, so
+---`err` is set (ERR-11) instead of answering the same bare `{}` a buffer with
+---genuinely no table constructors would.
+---@param bufnr integer
+---@return Insights.Symbols.Match[]
+---@return string|nil err
+function M.scan_buffer(bufnr)
+  if not api.nvim_buf_is_valid(bufnr) then
+    return {}
+  end
+
+  local ok_ft, ft = pcall(api.nvim_get_option_value, "filetype", { buf = bufnr })
+  if not ok_ft or ft ~= "lua" then
+    return {}
+  end
+
+  local ok_p, parser_obj = pcall(ts.get_parser, bufnr, "lua")
+  return scan_parsed(ok_p, parser_obj, bufnr)
+end
+
+---The same for the text of a Lua file, parsed as a string: no buffer is made, so no FileType autocmds run
+---(ftplugins, an LSP client) and nothing stays loaded (`insights.symbols.source`).
+---@param text string
+---@return table[]
+---@return string|nil err
+function M.scan_text(text)
+  local ok_p, parser_obj = pcall(ts.get_string_parser, text, "lua")
+  return scan_parsed(ok_p, parser_obj, text)
 end
 
 ---Scan all .lua files in cwd.
@@ -221,10 +242,10 @@ function M.scan_cwd()
 
   local all = {}
   local errors = {}
+  -- a loaded file from its buffer, every other one as text: no bufload (insights.symbols.source)
+  local loaded = file_source.loaded_buffers()
   for _, path in ipairs(filtered) do
-    local bufnr = vim.fn.bufadd(path)
-    vim.fn.bufload(bufnr)
-    local matches, err = M.scan_buffer(bufnr)
+    local matches, err = file_source.scan(path, loaded, M)
     if err then
       errors[#errors + 1] = err
     end
