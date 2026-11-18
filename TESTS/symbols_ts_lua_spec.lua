@@ -286,6 +286,9 @@ return function(H)
       "local on_disk_table = {}",
       'local s = "on_disk_string"',
     }, dir .. "/disk.lua")
+    -- a name outside the ANSI code page: LuaJIT's io.open cannot open it on Windows
+    vim.fn.mkdir(dir .. "/Übersicht", "p")
+    vim.fn.writefile({ "local function umlaut_fn() end" }, dir .. "/Übersicht/ü.lua")
     vim.fn.writefile({ "local function saved_fn() end" }, dir .. "/open.lua")
 
     local original_cwd = vim.fn.getcwd()
@@ -301,6 +304,7 @@ return function(H)
       H.ok(by_lua.on_disk_fn, "ts_lua: a file in no buffer is scanned from its text")
       H.ok(by_lua.unsaved_fn, "a loaded file is scanned from its buffer, unsaved changes included")
       H.eq(by_lua.saved_fn, nil, "and not from what is on disk")
+      H.ok(by_lua.umlaut_fn, "a file below a folder with an umlaut is read too")
       H.ok(by_name(ts_tables.scan_cwd()).on_disk_table, "ts_lua_tables: a table from the text")
       H.ok(
         by_name(ts_strings.scan_cwd())['"on_disk_string"'],
