@@ -4,6 +4,7 @@
 return {
   id = "insights.annotations",
   feature = "insights.annotations",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = "TODO and FIX in comments are coloured with their icon in the sign column",
   sizes = { { rows = 30, cols = 100 } },
   steps = {

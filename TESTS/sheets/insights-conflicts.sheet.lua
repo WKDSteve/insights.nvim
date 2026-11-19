@@ -5,6 +5,7 @@
 return {
   id = "insights.conflicts",
   feature = "insights.conflicts",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = "A merge conflict is in quickfix after the start and on :Insights conflicts",
   sizes = { { rows = 40, cols = 120 } },
   requires = {

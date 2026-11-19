@@ -3,6 +3,7 @@
 return {
   id = "insights.metrics",
   feature = "insights.metrics",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = ":Insights metrics and :Insights smells report on a small Lua project",
   sizes = { { rows = 40, cols = 120 } },
   requires = {

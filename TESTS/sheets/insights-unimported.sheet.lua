@@ -3,6 +3,7 @@
 return {
   id = "insights.unimported",
   feature = "insights.unimported",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = "Writing a JSX file that uses an unimported component warns; :Insights unimported agrees",
   sizes = { { rows = 40, cols = 120 } },
   steps = {

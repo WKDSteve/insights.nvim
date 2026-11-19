@@ -3,6 +3,7 @@
 return {
   id = "insights.todos",
   feature = "insights.todos",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = ":Insights todos puts the TODO of a small project into the quickfix list",
   sizes = { { rows = 40, cols = 120 } },
   requires = {

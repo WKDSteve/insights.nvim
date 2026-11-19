@@ -6,6 +6,7 @@
 return {
   id = "insights.imports-graph",
   feature = "insights.imports-graph",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = ":Insights imports graph renders the import graph of a small project with dot",
   sizes = { { rows = 40, cols = 120 } },
   requires = {

@@ -5,6 +5,7 @@
 return {
   id = "insights.cli",
   feature = "insights.cli",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = "scripts/insights.lua unimported reports a component used but never imported, exit 1 with --strict",
   sizes = { { rows = 24, cols = 100 } },
   requires = {

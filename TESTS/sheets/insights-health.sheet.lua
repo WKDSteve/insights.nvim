@@ -4,6 +4,7 @@
 return {
   id = "insights.health",
   feature = "insights.health",
+  task = "insights.nvim/performance-pruefung-luecken-schliessen-katalog-feature-shee",
   title = ":checkhealth insights reports the tools and the declared dependencies",
   sizes = { { rows = 40, cols = 120 } },
   steps = {
