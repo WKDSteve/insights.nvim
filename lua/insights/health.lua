@@ -104,13 +104,8 @@ local function check_autocmds()
         })
       end
     else
-      if exe("kill") then
-        ok_s("kill available — dev-server process group can be killed")
-      else
-        warn_s("kill not found — dev-server kill may not work", {
-          "Install procps (Linux) or the base utilities providing kill(1)",
-        })
-      end
+      -- Signalled in-process (vim.uv.kill), so there is no kill(1) to look for.
+      ok_s("dev servers get SIGTERM to their process group in-process — no kill program needed")
     end
   else
     info_s("devserver disabled (devserver.enable = false)")

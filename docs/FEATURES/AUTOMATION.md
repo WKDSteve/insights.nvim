@@ -35,7 +35,7 @@ Notices dev servers started in a Neovim terminal (matching
 `devserver.patterns` — `npm run dev`, `astro dev`, `vite`, …) and offers to
 kill them on exit. Only terminals this Neovim instance started are
 tracked: the kill targets that terminal's recorded PID (`taskkill /T` on
-Windows, `kill -TERM -<pid>` elsewhere), never a name-based sweep across
+Windows, SIGTERM to its process group elsewhere), never a name-based sweep across
 the whole machine. Detection relies on the terminal's title being set via
 OSC 0/2 (most dev servers do this); starting the server as the terminal's
 own command (`:terminal npm run dev`) always works, a command typed into

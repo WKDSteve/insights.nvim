@@ -42,7 +42,7 @@ once per terminal — the answer sticks for that terminal's lifetime.
 
 **Only terminals this Neovim instance started are tracked.** The kill targets
 that terminal's recorded PID — its process tree via `taskkill /T` on Windows,
-its process group via `kill -TERM -<pid>` elsewhere. A server you started in
+its process group (SIGTERM, sent in-process) elsewhere. A server you started in
 another shell or a tmux pane is never touched, because this plugin only kills
 processes it can account for. That is the deliberate trade-off against a
 `pkill -f "astro dev"`-style sweep, which would also kill servers that have

@@ -12,7 +12,7 @@ Fifteen sections. Most degrade gracefully — a missing optional tool is
 |---|---|
 | `lib.nvim` | The hard dependency itself, plus `lib.nvim.bindings.usercmd.composer` (the `:Insights` command layer) |
 | `ui.nvim` | `ui.kit` — required for the dev-server prompt (`devserver.prompt = true`, the default); `error` (not just `info`) when missing, since that feature has no fallback |
-| Automatic triggers | Whether `conflicts` (needs `git` executable), `unimported`, and `devserver` are enabled, and whether each one's own tool (`git`, `taskkill`/`kill` for killing a dev-server process tree) is actually present |
+| Automatic triggers | Whether `conflicts` (needs `git` executable), `unimported`, and `devserver` are enabled, and whether each one's own tool (`git`, `taskkill` on Windows for killing a dev-server process tree; elsewhere the signal is sent in-process) is actually present |
 | Neovim version | `>= 0.9` required (`error` below it); separately notes whether `vim.system` (0.10+) is available, since async tree/count paths need it |
 | External tools | `rg` (ripgrep — required for the symbol indexer, `error` if missing); PowerShell on Windows / `find`+`sed` on Unix for the file tree |
 | Optional pickers | telescope.nvim / fzf-lua — `info` either way, since the scratch-buffer fallback always works |

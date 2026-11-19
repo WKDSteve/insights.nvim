@@ -63,27 +63,34 @@ function M.kill_tree(pid)
     return false
   end
 
-  local cmd
+  local uv = vim.uv or vim.loop
+
+  ---Send SIGTERM in-process; true when the signal was delivered.
+  ---@param target integer a pid, or a negated process-group id
+  ---@return boolean
+  local function signal(target)
+    local ok, res = pcall(uv.kill, target, "sigterm")
+    return ok and res == 0
+  end
+
   if require("insights.util.platform").is_windows() then
-    cmd = { "taskkill", "/PID", tostring(pid), "/T", "/F" }
-  else
-    -- Negative pid targets the process group, so the server's own children die
-    -- with it; the shell is the group leader for a terminal job.
-    cmd = { "kill", "-TERM", "-" .. tostring(pid) }
+    -- Windows has no process groups to signal; taskkill /T walks the tree.
+    local ok, res = pcall(function()
+      return vim.system({ "taskkill", "/PID", tostring(pid), "/T", "/F" }, { text = true }):wait()
+    end)
+    if ok and res and res.code == 0 then
+      return true
+    end
+    -- taskkill unavailable or refused: at least the process itself.
+    return signal(pid)
   end
 
-  local ok, res = pcall(function()
-    return vim.system(cmd, { text = true }):wait()
-  end)
-  if ok and res and res.code == 0 then
-    return true
-  end
-
-  -- Fall back to the plain pid (no process group, or taskkill unavailable).
-  local ok2, res2 = pcall(function()
-    return vim.system({ "kill", "-TERM", tostring(pid) }, { text = true }):wait()
-  end)
-  return (ok2 and res2 and res2.code == 0) or false
+  -- Negative pid targets the process group, so the server's own children die
+  -- with it; the terminal job leads its own group. Signalled through libuv, not
+  -- by starting `kill`: procps-ng's kill (Ubuntu) delivers a group signal and
+  -- still exits 1, so the old fallback found the pid gone and a killed server
+  -- was reported as "killed 0". No process to start is also no wait.
+  return signal(-pid) or signal(pid)
 end
 
 ---Record a decision for a terminal channel.

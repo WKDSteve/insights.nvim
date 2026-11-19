@@ -157,8 +157,8 @@ return function(H)
       )
       H.contains(text_of("Symbol cache"), "cache disabled", "and a disabled cache")
 
-      -- Enabled again, the devserver section names the kill tool for this
-      -- platform and nothing for the other.
+      -- Enabled again, the devserver section names how this platform kills
+      -- (taskkill, or the in-process signal) and nothing for the other.
       config.setup({
         conflicts = { enable = true },
         unimported = { enable = true },
@@ -173,7 +173,7 @@ return function(H)
         H.contains(triggers, "taskkill", "and taskkill is probed on Windows")
         H.excludes(triggers, "procps", "with no Unix advice")
       else
-        H.contains(triggers, "kill", "and kill is probed on Unix")
+        H.contains(triggers, "in-process", "and Unix says the signal needs no kill program")
       end
       H.contains(triggers, "conflicts: enabled", "an enabled conflicts feature is described")
       H.contains(triggers, "unimported: enabled", "and so is unimported")

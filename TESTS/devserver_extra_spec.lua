@@ -19,6 +19,7 @@ return function(H)
 
   local real_kit = package.loaded["ui.kit"]
   local real_system = vim.system
+  local real_uv_kill = vim.uv.kill
   local real_platform = package.loaded["insights.util.platform"]
 
   local asked = {}
@@ -66,25 +67,47 @@ return function(H)
       }
     end
 
+    -- In-process signals: [target] = 0 delivered, anything else refused (luv's `fail`).
+    local signalled, delivered = {}, {}
+    vim.uv.kill = function(target, sig)
+      signalled[#signalled + 1] = { target = target, sig = sig }
+      if delivered[target] then
+        return 0
+      end
+      return nil, "ESRCH: no such process", "ESRCH"
+    end
+
     windows = true
-    spawned, killed.code = {}, 0
+    spawned, killed.code, signalled = {}, 0, {}
     H.ok(devserver.kill_tree(4242), "a kill that works reports true")
     H.eq(spawned[1][1], "taskkill", "using taskkill on Windows")
     H.ok(vim.tbl_contains(spawned[1], "/T"), "with /T so the whole tree goes")
     H.ok(vim.tbl_contains(spawned[1], "4242"), "for the recorded pid")
     H.eq(#spawned, 1, "and no fallback when the first attempt works")
+    H.eq(#signalled, 0, "nor a signal")
 
+    spawned, killed.code, signalled, delivered = {}, 1, {}, { [4242] = true }
+    H.ok(devserver.kill_tree(4242), "a refused taskkill falls back to the process itself")
+    H.eq(signalled[1].target, 4242, "signalled in-process")
+
+    -- Unix: the group through libuv, no `kill` process (procps-ng's kill exits 1 for a
+    -- group signal it delivered, so a spawned kill reported a killed server as not killed).
     windows = false
-    spawned = {}
-    H.ok(devserver.kill_tree(4242), "the Unix path works the same way")
-    H.eq(spawned[1][1], "kill", "using kill")
-    H.ok(vim.tbl_contains(spawned[1], "-4242"), "with a negative pid, targeting the process group")
+    spawned, killed.code, signalled, delivered = {}, 1, {}, { [-4242] = true }
+    H.ok(devserver.kill_tree(4242), "the Unix path signals the process group")
+    H.eq(#spawned, 0, "without starting a kill process")
+    H.eq(signalled[1].target, -4242, "with a negative pid, targeting the process group")
+    H.eq(signalled[1].sig, "sigterm", "with SIGTERM")
+    H.eq(#signalled, 1, "and no fallback when the group signal was delivered")
 
-    -- A failing first attempt falls back to the plain pid.
-    spawned, killed.code = {}, 1
+    -- No process group: the plain pid.
+    signalled, delivered = {}, { [4242] = true }
+    H.ok(devserver.kill_tree(4242), "without a group, the pid itself")
+    H.eq(signalled[2].target, 4242, "the second time without the group prefix")
+
+    signalled, delivered = {}, {}
     H.falsy(devserver.kill_tree(4242), "when both attempts fail, so does kill_tree")
-    H.eq(#spawned, 2, "having tried twice")
-    H.ok(vim.tbl_contains(spawned[2], "4242"), "the second time without the group prefix")
+    H.eq(#signalled, 2, "having tried twice")
 
     -- ── consider / ask ─────────────────────────────────────────────────────
     config.setup({
@@ -156,18 +179,23 @@ return function(H)
     config.setup({
       devserver = { enable = true, prompt = true, patterns = { "npm run dev" } },
     })
-    spawned, killed.code = {}, 0
+    spawned, killed.code, signalled = {}, 0, {}
+    delivered = setmetatable({}, {
+      __index = function()
+        return true
+      end,
+    })
 
     devserver.reset()
     answer = false
     devserver.consider(chan, "npm run dev")
     H.eq(devserver.kill_all(), 0, "on exit, a server the user said no to is left alone")
-    H.eq(#spawned, 0, "nothing is spawned for it")
+    H.eq(#spawned + #signalled, 0, "nothing is spawned or signalled for it")
 
     -- ...unless the kill is forced, which is what `:Insights devserver kill`
     -- does: the user is asking now, whatever they answered then.
     H.eq(devserver.kill_all(true), 1, "a forced kill takes it anyway")
-    H.ok(#spawned > 0, "spawning the killer")
+    H.ok(#signalled > 0, "signalling it")
 
     devserver.reset()
     H.eq(devserver.kill_all(), 0, "an empty ledger kills nothing")
@@ -197,6 +225,7 @@ return function(H)
   pcall(vim.fn.jobwait, jobs, 2000)
 
   vim.system = real_system
+  vim.uv.kill = real_uv_kill
   package.loaded["ui.kit"] = real_kit
   package.loaded["insights.util.platform"] = real_platform
   devserver.reset()
