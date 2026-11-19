@@ -51,8 +51,59 @@ function _G.write(path, lines)
   f:close()
 end
 
----A throwaway Lua project, the plugin set up, `lua/app/main.lua` open.
-function _G.boot()
+---The text of the first floating window that holds `text` (plain), or nil.
+---@param text string
+---@return string|nil
+function _G.float_with(text)
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_config(w).relative ~= "" then
+      local lines = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(w), 0, -1, false)
+      local t = table.concat(lines, "\n")
+      if t:find(text, 1, true) then
+        return t
+      end
+    end
+  end
+  return nil
+end
+
+---Make the project a git repository whose `c.txt` holds a real merge conflict (git runs as the sheet's
+---preparation; the identity and signing are set per call, nothing of the user's git config is needed).
+function _G.conflicted_repo()
+  local r = _G.proj
+  local function git(...)
+    local argv = {
+      "git",
+      "-c",
+      "user.name=s",
+      "-c",
+      "user.email=s@e.i",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "core.autocrlf=false",
+      "-C",
+      r,
+      ...,
+    }
+    return vim.system(argv, { text = true }):wait()
+  end
+  git("init", "-q", "-b", "main")
+  _G.write(r .. "/c.txt", { "one", "two", "three" })
+  git("add", "c.txt")
+  git("commit", "-q", "-m", "first")
+  git("checkout", "-q", "-b", "topic")
+  _G.write(r .. "/c.txt", { "one", "topic", "three" })
+  git("commit", "-q", "-a", "-m", "t")
+  git("checkout", "-q", "main")
+  _G.write(r .. "/c.txt", { "one", "main", "three" })
+  git("commit", "-q", "-a", "-m", "m")
+  git("merge", "topic")
+end
+
+---A throwaway Lua project, the plugin set up with `opts`, `lua/app/main.lua` open.
+---@param opts table|nil the options for `require("insights").setup`
+function _G.boot(opts)
   local dir = vim.fs.normalize(vim.fn.tempname())
   vim.fn.mkdir(dir, "p")
   _G.proj = dir
@@ -82,6 +133,6 @@ function _G.boot()
     "return a",
   })
   vim.cmd("cd " .. vim.fn.fnameescape(dir))
-  require("insights").setup({})
+  require("insights").setup(opts or {})
   vim.cmd("edit " .. vim.fn.fnameescape(dir .. "/lua/app/main.lua"))
 end

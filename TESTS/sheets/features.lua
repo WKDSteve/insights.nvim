@@ -29,6 +29,7 @@ return {
   {
     id = "insights.imports-graph",
     title = ":Insights imports graph renders the dependency graph as a PNG",
+    surface = { "command:Insights imports graph" },
     docs = "docs/commands.md",
   },
   {
@@ -87,6 +88,14 @@ return {
     id = "insights.hover",
     title = "hover.nvim's float names who imports the module under the cursor, from a scan that already ran",
     docs = "docs/hover.md",
+    -- It answers from the remembered :Insights imports scan and never starts one (insights.hover), and
+    -- hover.nvim is no dependency of the suite: nothing of its own for testing perf to measure.
+    perf = "skip:starts no process, answers from the remembered imports scan inside hover.nvim's float",
+  },
+  {
+    id = "insights.health",
+    title = ":checkhealth insights reports Neovim, lib.nvim, the optional plugins and the tools it starts",
+    docs = "README.md",
   },
   {
     id = "insights.cli",
