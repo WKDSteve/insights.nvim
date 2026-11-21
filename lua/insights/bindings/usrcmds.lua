@@ -499,10 +499,16 @@ local function offer_cache_build(question, on_build)
 end
 
 ---@internal
-local function build_cache()
+---Rebuild without blocking the editor; `after` runs once the build is through.
+---@param after? fun()
+local function build_cache(after)
   notify.info("rebuilding symbol cache…")
-  local entries, msg = require("insights.symbols").rebuild()
-  notify.info(msg or (string.format("%d symbols cached", #entries)))
+  require("insights.symbols").rebuild_async(function(entries, msg)
+    notify.info(msg or (string.format("%d symbols cached", #entries)))
+    if after then
+      after()
+    end
+  end)
 end
 
 ---@internal
@@ -519,8 +525,9 @@ local function handle_cache(args, offered)
   ---@param question string
   local function offer(question)
     offer_cache_build(question, function()
-      build_cache()
-      handle_cache(args, true)
+      build_cache(function()
+        handle_cache(args, true)
+      end)
     end)
   end
 

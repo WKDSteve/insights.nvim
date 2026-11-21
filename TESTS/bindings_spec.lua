@@ -418,9 +418,9 @@ return function(H)
       end,
     }
     package.loaded["insights.symbols"] = {
-      rebuild = function()
+      rebuild_async = function(cb)
         calls[#calls + 1] = { "symbols.rebuild" }
-        return {}, "rebuilt"
+        cb({}, "rebuilt")
       end,
     }
     package.loaded["insights.scan.cache"] = {

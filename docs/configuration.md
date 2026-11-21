@@ -40,8 +40,8 @@ require("insights").setup({
       ttl_seconds = 3600,   -- 0 = never expire
     },
 
-    -- Progress indicator while a cwd index is built (one rg pass per language
-    -- pattern). Needs lib.nvim; silently a no-op without it.
+    -- Progress indicator while a cwd index is built (one rg per language, side
+    -- by side; cancelling it stops the build). Needs lib.nvim; a no-op without it.
     -- "auto" | "notify" | "statusline" | "fidget" | "float" | "kit"
     progress_style = "auto",
   },

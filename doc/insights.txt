@@ -694,9 +694,10 @@ All keys are optional. Unset keys use the defaults shown below.
   Progress indicator while a cwd index is built. One of `"auto"` (default),
   `"notify"`, `"statusline"`, `"fidget"`, `"float"`, `"kit"`.
 
-  Building the index runs one `rg` pass per enabled language pattern, each
+  Building the index runs one `rg` per enabled language, side by side, each
   scanning the whole tree — on a large project that is seconds of no output.
-  The indicator counts the passes and shows the running symbol total.
+  The editor keeps taking input meanwhile; the indicator counts the finished
+  languages, and cancelling it (<Esc>) stops the build.
 
   Requires `lib.nvim`, which provides it via `lib.nvim.progress`. Without
   `lib.nvim` installed the option is silently a no-op.

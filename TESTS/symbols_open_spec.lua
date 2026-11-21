@@ -89,23 +89,45 @@ return function(H)
     saved[name] = package.loaded[name]
   end
 
-  local calls, shown
+  local calls, shown, answered
   local answer = { { filename = "a.lua", lnum = 3, func_type = "local", name = "alpha" } }
 
+  -- The function scan answers on a later tick, as rg does. The waiting `get`
+  -- raises: a key or a command that went back to it would lock the editor for
+  -- the whole rg run again (task insights.nvim/symbolindex-und-imports-scan-
+  -- ein-rg-je-muster-glob-nacheinan: 26 rg starts, 2.3 s of locked input).
   package.loaded["insights.symbols"] = {
-    get = function(scope, rebuild)
+    get = function()
+      error("open() must not wait for the scan (symbols.get)")
+    end,
+    get_async = function(scope, rebuild, cb)
       calls[#calls + 1] = { "get", scope, rebuild }
-      return answer, "get msg"
+      vim.schedule(function()
+        cb(answer, "get msg")
+        answered = true
+      end)
     end,
     get_tables = function(scope)
       calls[#calls + 1] = { "get_tables", scope }
+      answered = true
       return answer, "tables msg"
     end,
     get_strings = function(scope)
       calls[#calls + 1] = { "get_strings", scope }
+      answered = true
       return answer, "strings msg"
     end,
   }
+
+  ---`open.open` and wait until the scanner answered (and the picker opened).
+  ---@param o table|nil
+  local function open_settled(o)
+    answered = false
+    open.open(o)
+    vim.wait(2000, function()
+      return answered
+    end, 5)
+  end
   package.loaded["insights.ui.fzf"] = {
     open = function(entries, title)
       shown = { ui = "fzf", entries = entries, title = title }
@@ -124,15 +146,20 @@ return function(H)
 
   local ok_body, err_body = pcall(function()
     -- Defaults: cwd + functions, and whichever UI is installed.
-    calls, shown = {}, nil
+    calls, shown, answered = {}, nil, false
     open.open()
+    H.eq(shown, nil, "open() returns before the function scan answered")
+    H.falsy(answered, "the scan runs on without the editor waiting for it")
+    vim.wait(2000, function()
+      return answered
+    end, 5)
     H.eq(calls[1][1], "get", "no type means functions")
     H.eq(calls[1][2], "cwd", "and no scope means the working directory")
     H.eq(calls[1][3], false, "with no rebuild")
     H.ok(shown, "and the result is shown")
 
     calls, shown = {}, nil
-    open.open({ type = "tables", scope = "buffer", ui = "fzf" })
+    open_settled({ type = "tables", scope = "buffer", ui = "fzf" })
     H.eq(calls[1][1], "get_tables", "type = tables reaches the table scanner")
     H.eq(calls[1][2], "buffer", "with the scope it was given")
     H.eq(shown.ui, "fzf", "and the fzf adapter opens it")
@@ -141,41 +168,44 @@ return function(H)
     H.contains(shown.title, "1 found", "and the count")
 
     calls, shown = {}, nil
-    open.open({ type = "strings", ui = "telescope" })
+    open_settled({ type = "strings", ui = "telescope" })
     H.eq(calls[1][1], "get_strings", "type = strings reaches the string scanner")
     H.eq(shown.ui, "telescope", "and telescope opens it")
 
     calls, shown = {}, nil
-    open.open({ rebuild = true, ui = "scratch" })
+    open_settled({ rebuild = true, ui = "scratch" })
     H.eq(calls[1][3], true, "rebuild is passed to the function scanner")
     H.eq(shown.ui, "scratch", "the scratch buffer renders the entries itself")
     H.eq(shown.lines[1], "a.lua:3  [local] alpha", "as path:line [type] name")
 
     -- `rebuild` is compared to `true` here too.
     calls = {}
-    open.open({ rebuild = "yes" })
+    open_settled({ rebuild = "yes" })
     H.eq(calls[1][3], false, "a non-boolean rebuild is not a rebuild")
 
     -- An unknown UI falls through to telescope, which is the historical
     -- default branch of the dispatch.
     calls, shown = {}, nil
-    open.open({ ui = "something-else" })
+    open_settled({ ui = "something-else" })
     H.eq(shown.ui, "telescope", "an unrecognised UI falls back to telescope")
 
     -- Nothing found: the "nothing found" guard the keymap path used to be
     -- missing. No picker is opened at all.
     answer = {}
     calls, shown = {}, nil
-    open.open({ ui = "scratch" })
+    open_settled({ ui = "scratch" })
     H.eq(shown, nil, "an empty scan opens no picker")
     H.eq(calls[1][1], "get", "although the scan did run")
 
     -- A scanner answering nil is the same kind of nothing.
-    package.loaded["insights.symbols"].get = function()
-      return nil, nil
+    package.loaded["insights.symbols"].get_async = function(_, _, cb)
+      vim.schedule(function()
+        cb(nil, nil)
+        answered = true
+      end)
     end
     shown = nil
-    open.open({ ui = "scratch" })
+    open_settled({ ui = "scratch" })
     H.eq(shown, nil, "and neither does a scanner that answers nothing at all")
   end)
 

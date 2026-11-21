@@ -70,24 +70,26 @@ local UI_BACKENDS = {
 M.SCOPES = { "cwd", "buffer" }
 
 ---How each symbol type is scanned: the notice shown first, then the scan.
----@type table<string, { notice: string, scan: fun(symbols: table, scope: string, rebuild: boolean): table[]|nil, string|nil }>
+---`scan` answers through `done`, on the main loop; the function scan runs rg
+---without blocking the editor, the Tree-sitter ones answer right away.
+---@type table<string, { notice: string, scan: fun(symbols: table, scope: string, rebuild: boolean, done: fun(entries: table[]|nil, msg: string|nil)) }>
 local SCANNERS = {
   functions = {
     notice = "scanning symbols…",
-    scan = function(symbols, scope, rebuild)
-      return symbols.get(scope, rebuild)
+    scan = function(symbols, scope, rebuild, done)
+      symbols.get_async(scope, rebuild, done)
     end,
   },
   tables = {
     notice = "scanning Lua tables…",
-    scan = function(symbols, scope)
-      return symbols.get_tables(scope)
+    scan = function(symbols, scope, _, done)
+      done(symbols.get_tables(scope))
     end,
   },
   strings = {
     notice = "scanning Lua strings…",
-    scan = function(symbols, scope)
-      return symbols.get_strings(scope)
+    scan = function(symbols, scope, _, done)
+      done(symbols.get_strings(scope))
     end,
   },
 }
@@ -146,7 +148,8 @@ local function open_picker(entries, ui, label)
   (backend or UI_BACKENDS[1]).open(entries, title)
 end
 
----Scan for symbols and show them.
+---Scan for symbols and show them. The picker opens once the scan is through;
+---the editor takes input meanwhile.
 ---
 --- Every field is optional; the defaults are the ones `:Insights symbols`
 --- with no arguments has always used.
@@ -162,18 +165,18 @@ function M.open(opts)
   -- An unknown type scans functions, as it always has.
   local scanner = SCANNERS[sym_type] or SCANNERS.functions
   notify.info(scanner.notice)
-  local entries, msg = scanner.scan(symbols, scope, opts.rebuild == true)
+  scanner.scan(symbols, scope, opts.rebuild == true, function(entries, msg)
+    if msg then
+      notify.info(msg)
+    end
 
-  if msg then
-    notify.info(msg)
-  end
+    if not entries or #entries == 0 then
+      notify.warn("nothing found")
+      return
+    end
 
-  if not entries or #entries == 0 then
-    notify.warn("nothing found")
-    return
-  end
-
-  open_picker(entries, ui, scope .. " " .. sym_type)
+    open_picker(entries, ui, scope .. " " .. sym_type)
+  end)
 end
 
 ---Normalize a `keymaps.symbols_*` config value.

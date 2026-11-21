@@ -102,42 +102,101 @@ local function glob_files(cwd, ext)
 end
 
 ---@internal
---- Candidate files for one language: a `rg --files-with-matches` prefilter
---- when ripgrep is available (fast even on large repos — only lists file
---- names, doesn't read them), else a plain extension glob.
+--- The one `rg --files-with-matches` prefilter for every language in `mods`
+--- that has one: all their extensions as `--glob`, all their prefilters as
+--- `-e`. It only lists file names, so it is fast even on a large tree. Nil
+--- when ripgrep is missing or no language has a prefilter.
+---
+--- This used to be one rg per language, one after the other behind
+--- `vim.wait` (6-7 starts, ~90 ms each on Windows). The joint run returns a
+--- superset of what the per-language runs did -- a `.py` file that says
+--- `require` now comes back too -- and `assign` hands each file to the
+--- language its extension names; that language's scanner then finds what it
+--- always found (nothing, in a file only another prefilter matched).
 ---@param cwd string
----@param lang_mod table
----@return string[]
-local function candidate_files(cwd, lang_mod)
-  if vim.fn.executable("rg") == 1 and lang_mod.rg_prefilter then
-    local cfg = config.get()
-    local cmd = { "rg", "--files-with-matches", "--no-heading", "--pcre2" }
-    for _, ext in ipairs(lang_mod.extensions) do
-      cmd[#cmd + 1] = "--glob"
-      cmd[#cmd + 1] = "*." .. ext
-    end
-    for _, excl in
-      ipairs((cfg.symbols and cfg.symbols.indexing and cfg.symbols.indexing.exclude_patterns) or {})
-    do
-      cmd[#cmd + 1] = "--glob"
-      cmd[#cmd + 1] = "!" .. excl
-    end
-    cmd[#cmd + 1] = lang_mod.rg_prefilter
-    cmd[#cmd + 1] = cwd
-    local lines, code = rg.exec_sync(cmd)
-    -- Only 0 (matches) and 1 (no matches) are a completed rg run; -1 (timed
-    -- out/wedged, see rg.exec_sync) and any other exit code fall through to
-    -- the glob fallback below rather than being reported as "no candidates".
-    if code == 0 or code == 1 then
-      return lines
+---@param mods table[]
+---@return string[]|nil
+local function prefilter_cmd(cwd, mods)
+  if vim.fn.executable("rg") ~= 1 then
+    return nil
+  end
+  local cmd = { "rg", "--files-with-matches", "--no-heading", "--pcre2" }
+  local filters = {}
+  for _, lang_mod in ipairs(mods) do
+    if lang_mod.rg_prefilter then
+      for _, ext in ipairs(lang_mod.extensions) do
+        cmd[#cmd + 1] = "--glob"
+        cmd[#cmd + 1] = "*." .. ext
+      end
+      filters[#filters + 1] = lang_mod.rg_prefilter
     end
   end
+  if #filters == 0 then
+    return nil
+  end
+  local cfg = config.get()
+  for _, excl in
+    ipairs((cfg.symbols and cfg.symbols.indexing and cfg.symbols.indexing.exclude_patterns) or {})
+  do
+    cmd[#cmd + 1] = "--glob"
+    cmd[#cmd + 1] = "!" .. excl
+  end
+  for _, f in ipairs(filters) do
+    cmd[#cmd + 1] = "-e"
+    cmd[#cmd + 1] = f
+  end
+  cmd[#cmd + 1] = cwd
+  return cmd
+end
 
-  local files = {}
-  for _, ext in ipairs(lang_mod.extensions) do
-    vim.list_extend(files, glob_files(cwd, ext))
+---@internal
+--- Candidate files per language: the prefilter's files sorted to their
+--- language by extension, a plain extension glob for a language the
+--- prefilter did not cover (no prefilter of its own, or `files` is nil
+--- because rg is missing, timed out or failed).
+---@param cwd string
+---@param mods table[]
+---@param files string[]|nil  the prefilter's output, nil when it did not run to completion
+---@return table<string, string[]> by language id
+local function assign(cwd, mods, files)
+  local owner, out = {}, {}
+  for _, lang_mod in ipairs(mods) do
+    out[lang_mod.id] = {}
+    if files and lang_mod.rg_prefilter then
+      for _, ext in ipairs(lang_mod.extensions) do
+        owner[ext] = owner[ext] or lang_mod.id
+      end
+    end
   end
-  return files
+  for _, path in ipairs(files or {}) do
+    local ext = path:match("%.([^%./\\]+)$")
+    local id = ext and (owner[ext] or owner[ext:lower()])
+    if id then
+      table.insert(out[id], path)
+    end
+  end
+  for _, lang_mod in ipairs(mods) do
+    if not (files and lang_mod.rg_prefilter) then
+      for _, ext in ipairs(lang_mod.extensions) do
+        vim.list_extend(out[lang_mod.id], glob_files(cwd, ext))
+      end
+    end
+  end
+  return out
+end
+
+---@internal
+--- Only 0 (matches) and 1 (no matches) are a completed rg run; -1 (timed
+--- out/wedged, see `rg.exec_sync`) and any other exit code fall through to
+--- the glob fallback rather than being reported as "no candidates".
+---@param lines string[]
+---@param code integer
+---@return string[]|nil
+local function completed(lines, code)
+  if code == 0 or code == 1 then
+    return lines
+  end
+  return nil
 end
 
 ---@internal
@@ -204,26 +263,66 @@ local function lua_backend()
 end
 
 ---@internal
---- Build the { lang_mod, path, use_ts }[] work list and the per-language
---- backend-label map for a cwd scan.
----@param cwd string
----@return table[] todo, table<string,string> methods
-local function build_worklist(cwd)
-  local todo, methods = {}, {}
-  for _, lang_mod in ipairs(enabled_languages()) do
-    local use_ts = false
+--- The enabled languages, whether each reads through Tree-sitter, and the
+--- per-language backend-label map for a cwd scan.
+---@return table[] mods, table<string, boolean> use_ts, table<string,string> methods
+local function plan()
+  local mods, use_ts, methods = enabled_languages(), {}, {}
+  for _, lang_mod in ipairs(mods) do
     if lang_mod.id == "lua" then
-      local backend = lua_backend()
-      use_ts = backend == "treesitter"
-      methods.lua = use_ts and "treesitter" or "ripgrep"
+      use_ts.lua = lua_backend() == "treesitter"
+      methods.lua = use_ts.lua and "treesitter" or "ripgrep"
     else
       methods[lang_mod.id] = "regex"
     end
-    for _, path in ipairs(candidate_files(cwd, lang_mod)) do
-      todo[#todo + 1] = { lang_mod = lang_mod, path = path, use_ts = use_ts }
+  end
+  return mods, use_ts, methods
+end
+
+---@internal
+---@param mods table[]
+---@param use_ts table<string, boolean>
+---@param by_lang table<string, string[]>
+---@return table[] todo  { lang_mod, path, use_ts }[]
+local function to_worklist(mods, use_ts, by_lang)
+  local todo = {}
+  for _, lang_mod in ipairs(mods) do
+    for _, path in ipairs(by_lang[lang_mod.id]) do
+      todo[#todo + 1] = { lang_mod = lang_mod, path = path, use_ts = use_ts[lang_mod.id] == true }
     end
   end
-  return todo, methods
+  return todo
+end
+
+---@internal
+--- Build the { lang_mod, path, use_ts }[] work list and the per-language
+--- backend-label map for a cwd scan, waiting for the one rg prefilter.
+---@param cwd string
+---@return table[] todo, table<string,string> methods
+local function build_worklist(cwd)
+  local mods, use_ts, methods = plan()
+  local cmd = prefilter_cmd(cwd, mods)
+  local files = cmd and completed(rg.exec_sync(cmd)) or nil
+  return to_worklist(mods, use_ts, assign(cwd, mods, files)), methods
+end
+
+---@internal
+--- `build_worklist` without waiting: `cb(todo, methods)` on the main loop.
+---@param cwd string
+---@param cb fun(todo: table[], methods: table<string,string>)
+local function build_worklist_async(cwd, cb)
+  local mods, use_ts, methods = plan()
+  local cmd = prefilter_cmd(cwd, mods)
+  local function done(files)
+    cb(to_worklist(mods, use_ts, assign(cwd, mods, files)), methods)
+  end
+  if not cmd then
+    done(nil)
+    return
+  end
+  rg.exec_async(cmd, function(lines, code)
+    done(completed(lines, code))
+  end)
 end
 
 ---@internal
@@ -280,13 +379,24 @@ function M.scan_cwd()
 end
 
 --- Scan the cwd for all import/require calls without blocking the editor.
---- File discovery (ripgrep or globpath) runs synchronously — it only lists
---- names — while reading + parsing file contents is chunked across
---- `vim.schedule` so large projects don't freeze the UI.
+--- File discovery is one rg run the editor does not wait on, and reading +
+--- parsing file contents is chunked across `vim.schedule` so large projects
+--- don't freeze the UI.
 ---@param cb fun(data: ImportData)
 function M.scan_cwd_async(cb)
   local cwd = vim.fn.getcwd()
-  local todo, methods = build_worklist(cwd)
+  build_worklist_async(cwd, function(todo, methods)
+    M._scan_worklist(cwd, todo, methods, cb)
+  end)
+end
+
+---@internal
+--- The chunked read + parse half of `scan_cwd_async`.
+---@param cwd string
+---@param todo table[]
+---@param methods table<string,string>
+---@param cb fun(data: ImportData)
+function M._scan_worklist(cwd, todo, methods, cb)
   local raw = {}
   local CHUNK = 40
   local i = 1

@@ -1,7 +1,8 @@
 -- Feature sheet: import/require usage (task insights.nvim/testblatt-bindings-checkliste; the :Insights section of
 -- BINDINGS-RUNTIME-CHECKLIST.md): `:Insights imports`, `imports reverse` and `imports unused` on a small Lua project.
--- The scan runs ripgrep once per language glob (the rg burst testing perf reports, task
--- insights.nvim/symbolindex-und-imports-scan-ein-rg-je-muster-glob-nacheinan). Metrics, todos, unimported and
+-- The scan finds its files with one ripgrep for all languages, not waited on (it was one per language glob, the
+-- rg burst testing perf reported: task insights.nvim/symbolindex-und-imports-scan-ein-rg-je-muster-glob-nacheinan;
+-- `testing perf --sheet insights.reports` shows the starts per step). Metrics, todos, unimported and
 -- symbols have sheets of their own. Not here: the pickers behind `--ui` and the look of the report buffers.
 return {
   id = "insights.reports",

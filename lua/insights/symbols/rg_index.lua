@@ -1,5 +1,10 @@
 ---@module 'insights.symbols.rg_index'
 ---@brief Ripgrep-based symbol indexer with cache support.
+---
+--- One rg process per enabled language (all of its patterns as `-e`), all of
+--- them started at once and collected by callback. The build used to run one
+--- rg per pattern, one after the other behind `vim.wait` — 26 starts and
+--- seconds of locked input on Windows, where a process start alone is ~90 ms.
 local M = {}
 
 local notify = require("insights.util.notify").create("[insights.symbols.rg_index]")
@@ -40,14 +45,47 @@ function M.cache_variant(sym_cfg)
   }, "|")
 end
 
+---@class Insights.Symbols.Pass
+---@field language string
+---@field patterns string[]  the language's distinct patterns, in declaration order
+---@field exts     string[]  its file extensions, one `--glob` each
+
+---The rg passes a build of `languages` runs: one per enabled language,
+---carrying every distinct pattern of that language.
+---
+---Folding a language's patterns into one process finds the same lines: every
+---pattern is anchored at `^`, so a line yields at most one match, and the
+---parser names and classifies a hit from its text and file extension — never
+---from which pattern matched. What disappears are the duplicates a line used
+---to produce when two patterns of its language both matched it (an indented
+---Python `def` is both a "global" and a "method" pattern hit).
+---@param languages table<string, boolean>
+---@return Insights.Symbols.Pass[]
+function M.passes(languages)
+  local out, by_lang, seen = {}, {}, {}
+  for _, pat in ipairs(patterns.get_patterns(languages)) do
+    local key = pat.language .. "::" .. pat.pattern
+    if not seen[key] then
+      seen[key] = true
+      local pass = by_lang[pat.language]
+      if not pass then
+        pass = {
+          language = pat.language,
+          patterns = {},
+          exts = patterns.get_extensions({ [pat.language] = true }),
+        }
+        by_lang[pat.language] = pass
+        out[#out + 1] = pass
+      end
+      pass.patterns[#pass.patterns + 1] = pat.pattern
+    end
+  end
+  return out
+end
+
 ---@internal
 ---Starts an indicator for an index build, or nil when lib.nvim isn't installed.
----
----This works despite `M.build` being synchronous because `rg.exec_sync` waits
----via `vim.wait`, which pumps the event loop — so the delay-guard timer fires
----and the statusline repaints between passes. It would be dead code against a
----`vim.fn.systemlist`-style block; see the note in `insights.scan.rg`.
----@param total integer Number of distinct rg passes about to run
+---@param total integer Number of rg passes about to run
 ---@param style string|nil
 ---@return table|nil
 local function start_progress(total, style)
@@ -56,142 +94,262 @@ local function start_progress(total, style)
   end
   local handle = progress_mod.create({ title = "[insights]", style = style or "auto" })
   handle:update({
-    text = string.format("indexing symbols (%d passes)", total),
+    text = string.format("indexing symbols (%d languages)", total),
     current = 0,
     total = total,
   })
   return handle
 end
 
----Build a fresh index; returns (entries, errors, stats).
+---@alias Insights.Symbols.BuildStats { total_files: integer, total_symbols: integer, duration: number }
+---@alias Insights.Symbols.BuildCb fun(entries: table[], errors: string[], stats: Insights.Symbols.BuildStats, cancelled: boolean)
+
+---@internal
+---@param entries table[]
+---@param t0 integer
+---@return Insights.Symbols.BuildStats
+local function stats_for(entries, t0)
+  local files, file_count = {}, 0
+  for _, e in ipairs(entries) do
+    if not files[e.filename] then
+      files[e.filename] = true
+      file_count = file_count + 1
+    end
+  end
+  return { total_files = file_count, total_symbols = #entries, duration = os.time() - t0 }
+end
+
+---The passes worth running for a tree: those whose language has a file in
+---`files` (an `rg --files` listing). A language with no file yields no hit,
+---so dropping its pass changes nothing but the process count -- one rg start
+---costs ~90 ms on Windows, and libuv starts a process on the editor's thread.
+---@param passes Insights.Symbols.Pass[]
+---@param files string[]
+---@return Insights.Symbols.Pass[]
+function M.present(passes, files)
+  local seen = {}
+  for _, path in ipairs(files) do
+    local ext = path:match("%.([^%./\\]+)$")
+    if ext then
+      seen[ext] = true
+    end
+  end
+  local out = {}
+  for _, pass in ipairs(passes) do
+    for _, ext in ipairs(pass.exts) do
+      if seen[ext] then
+        out[#out + 1] = pass
+        break
+      end
+    end
+  end
+  return out
+end
+
+---Build a fresh index without blocking the editor.
+---
+---First one `rg --files` lists which enabled languages the tree has at all;
+---then one rg per present language runs, each started on its own event-loop
+---tick, so keys and redraws get through between two process starts (a start
+---is synchronous on the editor's thread; eleven back to back held it for 1.7 s
+---under load on Windows).
+---
+---`cb(entries, errors, stats, cancelled)` runs on the main loop once every
+---pass is through. Cancelling the progress indicator (<Esc> on it) stops the
+---running processes and starts no further ones; the callback then still runs,
+---with `cancelled = true`.
 ---@param cfg InsightsConfig
----@return table[], string[], { total_files: integer, total_symbols: integer, duration: number }
-function M.build(cfg)
+---@param cb Insights.Symbols.BuildCb
+function M.build_async(cfg, cb)
   local sym_cfg = cfg.symbols
   local t0 = os.time()
 
-  -- Snapshot once, up front: `M.build` runs several rg passes in sequence
-  -- (`rg.exec_sync`'s `vim.wait` pumps the event loop between them, see the
-  -- note above), so without an explicit `cwd` per pass a `:cd`/`:lcd` fired by
-  -- some other autocmd mid-build would make later passes scan a different
-  -- tree than the first one silently. Same reasoning as the buffer-scope path
-  -- in `insights.symbols.get_buffer`, which already passes `cwd` explicitly.
+  -- Snapshot once, up front: the passes run while the editor keeps taking
+  -- input, so without an explicit `cwd` per pass a `:cd`/`:lcd` mid-build would
+  -- make a pass started later scan a different tree. Same reasoning as the
+  -- buffer-scope path in `insights.symbols.get_buffer`, which passes the file.
   local cwd = vim.fn.getcwd()
 
-  if vim.fn.executable("rg") ~= 1 then
-    local msg = "ripgrep (rg) not found in PATH"
-    return {}, { msg }, { total_files = 0, total_symbols = 0, duration = 0 }
+  ---@param msg string
+  local function nothing(msg)
+    vim.schedule(function()
+      cb({}, { msg }, { total_files = 0, total_symbols = 0, duration = 0 }, false)
+    end)
   end
 
-  local pats = patterns.get_patterns(sym_cfg.languages)
-  if #pats == 0 then
-    return {}, { "no languages enabled" }, { total_files = 0, total_symbols = 0, duration = 0 }
+  if vim.fn.executable("rg") ~= 1 then
+    return nothing("ripgrep (rg) not found in PATH")
+  end
+
+  local all_passes = M.passes(sym_cfg.languages)
+  if #all_passes == 0 then
+    return nothing("no languages enabled")
   end
 
   local idx_cfg = sym_cfg.indexing or {}
-  local all_lines, errors = {}, {}
-  local seen_patterns = {}
-
-  -- Count the distinct passes up front rather than using `#pats`: duplicate
-  -- language/pattern pairs are skipped below, so `#pats` would promise more work
-  -- than actually happens and the indicator would stall short of its total.
-  local total_passes = 0
-  do
-    local counted = {}
-    for _, pat in ipairs(pats) do
-      local key = pat.language .. "::" .. pat.pattern
-      if not counted[key] then
-        counted[key] = true
-        total_passes = total_passes + 1
-      end
-    end
-  end
-
-  local progress = start_progress(total_passes, sym_cfg.progress_style)
-  local pass = 0
-
-  for _, pat in ipairs(pats) do
-    local key = pat.language .. "::" .. pat.pattern
-    if not seen_patterns[key] then
-      seen_patterns[key] = true
-
-      -- Named before the pass runs: each rg call scans the whole tree, so this
-      -- is what the user is waiting on, not what just finished.
-      if progress then
-        progress:update({
-          text = string.format("%s (%d symbols so far)", pat.language, #all_lines),
-          current = pass,
-          total = total_passes,
-        })
-      end
-
-      local exts = patterns.get_extensions({ [pat.language] = true })
-      local cmd = rg.build_cmd(pat.pattern, exts, {
-        exclude_patterns = idx_cfg.exclude_patterns,
-        max_file_size_kb = idx_cfg.max_file_size_kb,
-        follow_symlinks = idx_cfg.follow_symlinks,
-        cwd = cwd,
-      })
-      local lines, run_err = rg.run(cmd, pat.language)
-      if run_err then
-        errors[#errors + 1] = run_err
-      end
-      for _, l in ipairs(lines) do
-        all_lines[#all_lines + 1] = l
-      end
-      pass = pass + 1
-    end
-  end
+  local rg_opts = {
+    exclude_patterns = idx_cfg.exclude_patterns,
+    max_file_size_kb = idx_cfg.max_file_size_kb,
+    follow_symlinks = idx_cfg.follow_symlinks,
+    cwd = cwd,
+  }
+  local progress = start_progress(#all_passes, sym_cfg.progress_style)
+  local procs, cancelled = {}, false
 
   if progress then
-    progress:finish(string.format("indexed %d matches", #all_lines))
+    progress:on_cancel(function()
+      cancelled = true
+      for _, proc in pairs(procs) do
+        proc.kill()
+      end
+    end)
   end
 
-  notify.debug(string.format("rg produced %d lines", #all_lines))
+  ---@param passes Insights.Symbols.Pass[]
+  local function run_passes(passes)
+    local results, pass_errors = {}, {}
+    local pending, started = #passes, 0
 
-  local entries, parse_errors = parser.parse(all_lines, sym_cfg.languages)
-  for _, e in ipairs(parse_errors) do
-    errors[#errors + 1] = e
+    local function finish()
+      -- Pass order, not completion order: the same tree indexes the same way.
+      local all_lines, errors = {}, {}
+      for i = 1, #passes do
+        vim.list_extend(all_lines, results[i] or {})
+        if pass_errors[i] and not cancelled then
+          errors[#errors + 1] = pass_errors[i]
+        end
+      end
+
+      if cancelled then
+        cb({}, errors, stats_for({}, t0), true)
+        return
+      end
+      if progress then
+        progress:finish(string.format("indexed %d matches", #all_lines))
+      end
+      notify.debug(string.format("rg produced %d lines", #all_lines))
+
+      -- The callback must always run: `get_async` parks every later request for
+      -- this index behind it, so a parser error escaping here would leave them
+      -- waiting on a build that never answers.
+      local ok, entries, parse_errors = pcall(parser.parse, all_lines, sym_cfg.languages)
+      if not ok then
+        entries, parse_errors = {}, { "parse failed: " .. tostring(entries) }
+      end
+      vim.list_extend(errors, parse_errors)
+      cb(entries, errors, stats_for(entries, t0), false)
+    end
+
+    if #passes == 0 then
+      finish()
+      return
+    end
+    if progress then
+      progress:update({ current = 0, total = #passes })
+    end
+
+    local function start_next()
+      if cancelled then
+        -- The passes never started count as through, or `finish` never runs.
+        pending = pending - (#passes - started)
+        started = #passes
+        if pending == 0 then
+          finish()
+        end
+        return
+      end
+      started = started + 1
+      local i, pass = started, passes[started]
+      procs[i] = rg.run_async(
+        rg.build_cmd(pass.patterns, pass.exts, rg_opts),
+        pass.language,
+        function(lines, err)
+          results[i], pass_errors[i] = lines, err
+          procs[i] = nil
+          pending = pending - 1
+          if progress and not cancelled then
+            progress:update({
+              text = string.format("%s done (%d left)", pass.language, pending),
+              current = #passes - pending,
+              total = #passes,
+            })
+          end
+          if pending == 0 then
+            finish()
+          end
+        end
+      )
+      if started < #passes then
+        vim.schedule(start_next)
+      end
+    end
+    start_next()
   end
 
-  local files = {}
-  for _, e in ipairs(entries) do
-    files[e.filename] = true
+  local exts = {}
+  for _, pass in ipairs(all_passes) do
+    vim.list_extend(exts, pass.exts)
   end
-  local file_count = 0
-  for _ in pairs(files) do
-    file_count = file_count + 1
-  end
-
-  return entries,
-    errors,
-    {
-      total_files = file_count,
-      total_symbols = #entries,
-      duration = os.time() - t0,
-    }
+  procs.files = rg.exec_async(rg.build_files_cmd(exts, rg_opts), function(files, code)
+    procs.files = nil
+    if cancelled then
+      cb({}, {}, stats_for({}, t0), true)
+      return
+    end
+    -- 0: files listed, 1: none. Anything else (timed out, failed): run every
+    -- pass rather than conclude the tree is empty.
+    if code == 0 or code == 1 then
+      run_passes(M.present(all_passes, files))
+    else
+      run_passes(all_passes)
+    end
+  end)
 end
 
----Get index (from cache or fresh build).
----@param cfg           InsightsConfig
----@param force_rebuild boolean|nil
----@return table[] entries
----@return string|nil status_message A line for the picker's footer, or nil.
-function M.get(cfg, force_rebuild)
-  local c = cfg.symbols.cache
-  local variant = M.cache_variant(cfg.symbols)
+---@internal
+---How long the synchronous wrappers wait for `build_async`: the per-process
+---limit rg itself is held to (the passes run side by side), plus slack.
+---@param cfg InsightsConfig
+---@return integer
+local function sync_wait_ms(cfg)
+  local n = ((cfg.symbols or {}).indexing or {}).timeout_ms
+  return (type(n) == "number" and n > 0 and n or 120000) + 5000
+end
 
-  if not force_rebuild and c.enabled then
-    local cached, reason = cache.load(c.dir, "symbols", c.ttl_seconds, variant)
-    if cached then
-      return cached, string.format("cache: %d symbols", #cached)
-    end
-    if reason then
-      notify.debug("cache miss: " .. reason)
-    end
+---Build a fresh index and wait for it; returns (entries, errors, stats).
+---
+---For the synchronous entry points (CLI, Lua API). The passes still run side
+---by side, so the wait is one rg round, not one per language.
+---@param cfg InsightsConfig
+---@return table[], string[], Insights.Symbols.BuildStats
+function M.build(cfg)
+  local out
+  M.build_async(cfg, function(entries, errors, stats)
+    out = { entries, errors, stats }
+  end)
+  vim.wait(sync_wait_ms(cfg), function()
+    return out ~= nil
+  end, 10)
+  if not out then
+    return {}, { "symbol index build timed out" }, {
+      total_files = 0,
+      total_symbols = 0,
+      duration = 0,
+    }
   end
+  return out[1], out[2], out[3]
+end
 
-  local entries, errors, stats = M.build(cfg)
+---@internal
+---After a build: warn about errors, save the cache, word the status line.
+---@param cfg InsightsConfig
+---@param entries table[]
+---@param errors string[]
+---@param stats Insights.Symbols.BuildStats
+---@return table[] entries
+---@return string status_message
+local function settle(cfg, entries, errors, stats)
+  local c = cfg.symbols.cache
   if #errors > 0 then
     notify.warn(
       string.format(
@@ -204,7 +362,7 @@ function M.get(cfg, force_rebuild)
   end
 
   if c.enabled and #entries > 0 then
-    local ok, err = cache.save(c.dir, "symbols", entries, variant)
+    local ok, err = cache.save(c.dir, "symbols", entries, M.cache_variant(cfg.symbols))
     if not ok then
       notify.warn("cache save failed: " .. tostring(err))
     end
@@ -219,6 +377,84 @@ function M.get(cfg, force_rebuild)
     )
 end
 
+---@internal
+---The cached index, or nil when there is none to answer from.
+---@param cfg InsightsConfig
+---@param force_rebuild boolean|nil
+---@return table[]|nil entries
+---@return string|nil status_message
+local function from_cache(cfg, force_rebuild)
+  local c = cfg.symbols.cache
+  if force_rebuild or not c.enabled then
+    return nil
+  end
+  local cached, reason = cache.load(c.dir, "symbols", c.ttl_seconds, M.cache_variant(cfg.symbols))
+  if cached then
+    return cached, string.format("cache: %d symbols", #cached)
+  end
+  if reason then
+    notify.debug("cache miss: " .. reason)
+  end
+  return nil
+end
+
+---Get index (from cache or fresh build), waiting for a build.
+---@param cfg           InsightsConfig
+---@param force_rebuild boolean|nil
+---@return table[] entries
+---@return string|nil status_message A line for the picker's footer, or nil.
+function M.get(cfg, force_rebuild)
+  local cached, msg = from_cache(cfg, force_rebuild)
+  if cached then
+    return cached, msg
+  end
+  return settle(cfg, M.build(cfg))
+end
+
+---Builds in flight, by tree and variant: a second request for the same index
+---(the key pressed twice) joins the running build instead of starting another
+---round of processes.
+---@type table<string, fun(entries: table[], msg: string|nil)[]>
+local inflight = {}
+
+---Get index (from cache or fresh build) without blocking the editor.
+---`cb(entries, status_message)` runs on the main loop; a cache hit answers on
+---the next tick, a build once it is through. A cancelled build answers with no
+---entries and saves nothing.
+---@param cfg           InsightsConfig
+---@param force_rebuild boolean|nil
+---@param cb fun(entries: table[], msg: string|nil)
+function M.get_async(cfg, force_rebuild, cb)
+  local cached, msg = from_cache(cfg, force_rebuild)
+  if cached then
+    vim.schedule(function()
+      cb(cached, msg)
+    end)
+    return
+  end
+
+  local key = vim.fn.getcwd() .. "\0" .. M.cache_variant(cfg.symbols)
+  if inflight[key] then
+    table.insert(inflight[key], cb)
+    return
+  end
+  inflight[key] = { cb }
+
+  M.build_async(cfg, function(entries, errors, stats, cancelled)
+    local waiting = inflight[key] or {}
+    inflight[key] = nil
+    local out, out_msg
+    if cancelled then
+      out, out_msg = {}, "symbol index cancelled"
+    else
+      out, out_msg = settle(cfg, entries, errors, stats)
+    end
+    for _, waiter in ipairs(waiting) do
+      waiter(out, out_msg)
+    end
+  end)
+end
+
 ---Rebuild cache.
 ---@param cfg InsightsConfig
 ---@return table[], string|nil
@@ -228,6 +464,17 @@ function M.rebuild(cfg)
     cache.clear(c.dir, "symbols", M.cache_variant(cfg.symbols))
   end
   return M.get(cfg, true)
+end
+
+---Rebuild cache without blocking the editor; `cb(entries, msg)` as `get_async`.
+---@param cfg InsightsConfig
+---@param cb fun(entries: table[], msg: string|nil)
+function M.rebuild_async(cfg, cb)
+  local c = cfg.symbols.cache
+  if c.enabled then
+    cache.clear(c.dir, "symbols", M.cache_variant(cfg.symbols))
+  end
+  M.get_async(cfg, true, cb)
 end
 
 return M

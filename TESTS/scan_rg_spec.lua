@@ -66,6 +66,30 @@ return function(H)
 
   H.eq(rg.build_cmd("p", { "lua" }, nil)[1], "rg", "opts may be omitted entirely")
 
+  -- Several patterns: one `-e` each, so one process searches for all of them.
+  local multi = rg.build_cmd({ "^a", "-b" }, { "lua" }, { cwd = "/r" })
+  H.eq(table.concat(values_after(multi, "-e"), ","), "^a,-b", "a list becomes one -e per pattern")
+  H.eq(multi[#multi], "/r", "the root still comes last")
+  H.eq(multi[#multi - 1], "-b", "right after the last pattern")
+
+  -- The listing: the same file selection, no pattern, no output format.
+  local files = rg.build_files_cmd({ "lua", "go" }, {
+    cwd = "/r",
+    exclude_patterns = { "build/" },
+    max_file_size_kb = 64,
+    follow_symlinks = true,
+  })
+  H.eq(files[2], "--files", "build_files_cmd lists files")
+  H.eq(
+    table.concat(values_after(files, "--glob"), ","),
+    "*.lua,*.go,!build/",
+    "with the same globs and exclusions a search would use"
+  )
+  H.eq(values_after(files, "--max-filesize")[1], "64K", "the same size cap")
+  H.ok(vim.tbl_contains(files, "--follow"), "and symlink following")
+  H.falsy(vim.tbl_contains(files, "--vimgrep"), "and no search output format")
+  H.eq(files[#files], "/r", "rooted where it was told")
+
   -- ── exec_sync ────────────────────────────────────────────────────────────
   local real_system = vim.system
   local real_executable = vim.fn.executable
@@ -143,6 +167,104 @@ return function(H)
     local missing, missing_err = rg.run({ "rg" }, "lua")
     H.eq(#missing, 0, "no ripgrep, no lines")
     H.contains(missing_err or "", "ripgrep (rg) not found", "and an error saying why")
+
+    local async_missing
+    rg.run_async({ "rg" }, "lua", function(l, e)
+      async_missing = { l, e }
+    end)
+    vim.wait(1000, function()
+      return async_missing ~= nil
+    end, 5)
+    H.contains(async_missing[2] or "", "ripgrep (rg) not found", "run_async says so too")
+    vim.fn.executable = real_executable
+
+    -- ── exec_async / run_async ─────────────────────────────────────────────
+    -- The callback comes back on the main loop; the caller does not wait.
+    local seen_opts, killed
+    ---@param res table
+    local function fake_async(res)
+      vim.system = function(cmd, opts, cb)
+        seen_cmd, seen_opts = cmd, opts
+        vim.schedule(function()
+          cb(res)
+        end)
+        return {
+          kill = function(_, sig)
+            killed = sig
+          end,
+        }
+      end
+    end
+
+    ---@param start fun(done: fun(...))
+    ---@return table
+    local function settle(start)
+      local got
+      start(function(...)
+        got = { ... }
+      end)
+      H.eq(got, nil, "the callback never runs before the call returns")
+      vim.wait(1000, function()
+        return got ~= nil
+      end, 5)
+      return got
+    end
+
+    config.setup({ symbols = { indexing = { timeout_ms = 4321 } } })
+    fake_async({ code = 0, stdout = "a.lua:1:1:x\r\nb.lua:2:1:y\r\n" })
+    local ok_async = settle(function(done)
+      rg.exec_async({ "rg", "async" }, done)
+    end)
+    H.eq(#ok_async[1], 2, "exec_async splits the output into lines")
+    H.eq(ok_async[1][2], "b.lua:2:1:y", "CRLF and all")
+    H.eq(ok_async[2], 0, "and reports the exit code")
+    H.eq(seen_cmd[2], "async", "the command is passed through")
+    H.eq(seen_opts.timeout, 4321, "with the configured time limit")
+    config.setup({})
+
+    -- vim.system's own time limit stops the process with 124: the -1 sentinel.
+    fake_async({ code = 124, stdout = "" })
+    local timed = settle(function(done)
+      rg.exec_async({ "rg" }, done)
+    end)
+    H.eq(timed[2], -1, "a timed-out process reports -1, like exec_sync")
+
+    -- A command that cannot start answers -1 instead of raising.
+    vim.system = function()
+      error("ENOENT: no such file or directory")
+    end
+    local unstarted = settle(function(done)
+      rg.exec_async({ "rg" }, done)
+    end)
+    H.eq(unstarted[2], -1, "a process that never started reports -1")
+
+    -- kill stops the process.
+    fake_async({ code = 0, stdout = "" })
+    killed = nil
+    local handle = rg.exec_async({ "rg" }, function() end)
+    handle.kill()
+    H.eq(killed, 15, "the handle's kill sends SIGTERM")
+    vim.wait(50, function()
+      return false
+    end)
+
+    -- run_async: the same classification as run.
+    fake_async({ code = 1, stdout = "" })
+    local none_async = settle(function(done)
+      rg.run_async({ "rg" }, "lua", done)
+    end)
+    H.eq(#none_async[1], 0, "run_async: exit 1 is no matches")
+    H.eq(none_async[2], nil, "and no error")
+    fake_async({ code = 2, stdout = "" })
+    local bad_async = settle(function(done)
+      rg.run_async({ "rg" }, "go", done)
+    end)
+    H.contains(bad_async[2] or "", "go: rg exited 2", "run_async names label and code")
+    fake_async({ code = 124, stdout = "" })
+    local slow_async = settle(function(done)
+      rg.run_async({ "rg" }, "go", done)
+    end)
+    H.contains(slow_async[2] or "", "go: rg timed out", "and says when it timed out")
   end)
 
   vim.system = real_system

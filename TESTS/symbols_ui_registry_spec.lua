@@ -27,12 +27,16 @@ return function(H)
   ok(vim.tbl_contains(open.UIS, "fake"), "registered picker is listed")
 
   local symbols = require("insights.symbols")
-  local saved =
-    { get = symbols.get, get_tables = symbols.get_tables, get_strings = symbols.get_strings }
+  local saved = {
+    get_async = symbols.get_async,
+    get_tables = symbols.get_tables,
+    get_strings = symbols.get_strings,
+  }
   local called = {}
-  symbols.get = function(scope, rebuild)
+  -- The function scan answers through a callback (open() does not wait for rg).
+  symbols.get_async = function(scope, rebuild, cb)
     called[#called + 1] = { "get", scope, rebuild }
-    return { { name = "a" } }, nil
+    cb({ { name = "a" } }, nil)
   end
   symbols.get_tables = function(scope)
     called[#called + 1] = { "get_tables", scope }
@@ -63,7 +67,7 @@ return function(H)
     deq(got, nil, "an empty scan opens no picker")
   end)
 
-  symbols.get, symbols.get_tables, symbols.get_strings =
-    saved.get, saved.get_tables, saved.get_strings
+  symbols.get_async, symbols.get_tables, symbols.get_strings =
+    saved.get_async, saved.get_tables, saved.get_strings
   ok(good, "dispatch runs without error: " .. tostring(err))
 end

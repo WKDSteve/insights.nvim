@@ -41,10 +41,18 @@ return function(H)
     end
     cb(index)
   end
+  -- The build answers on a later tick, as the rg passes do; the waiting
+  -- `rebuild` raises, so `:Insights cache build` going back to it (and locking
+  -- the editor for the whole index build) turns this spec red.
   package.loaded["insights.symbols"] = {
     rebuild = function()
+      error(":Insights cache must not wait for the build (symbols.rebuild)")
+    end,
+    rebuild_async = function(cb)
       calls[#calls + 1] = "rebuild"
-      return {}, "rebuilt"
+      vim.schedule(function()
+        cb({}, "rebuilt")
+      end)
     end,
   }
   package.loaded["insights.scan.cache"] = {
