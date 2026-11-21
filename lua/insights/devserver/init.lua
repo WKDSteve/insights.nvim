@@ -162,6 +162,76 @@ function M.kill_all(force)
   return killed
 end
 
+---`M.kill_tree` without waiting: on Windows `taskkill /T` runs in the background
+---(a 200 ms freeze per server while it was a `:wait()`); on Unix the signal is
+---in-process anyway. `on_done(ok)` runs on the main loop, exactly once, never
+---from inside this call. VimLeavePre keeps the synchronous `M.kill_tree`:
+---Neovim would exit before a callback ran.
+---@param pid integer
+---@param on_done fun(ok: boolean)
+function M.kill_tree_async(pid, on_done)
+  local function finish(ok)
+    vim.schedule(function()
+      on_done(ok)
+    end)
+  end
+  if not pid or pid <= 0 then
+    finish(false)
+    return
+  end
+  if not require("insights.util.platform").is_windows() then
+    finish(M.kill_tree(pid))
+    return
+  end
+  local uv = vim.uv or vim.loop
+  local function signal()
+    local ok, res = pcall(uv.kill, pid, "sigterm")
+    return ok and res == 0
+  end
+  local started = pcall(
+    vim.system,
+    { "taskkill", "/PID", tostring(pid), "/T", "/F" },
+    { text = true, timeout = 10000 },
+    function(res)
+      -- taskkill unavailable, refused or timed out: at least the process itself.
+      vim.schedule(function()
+        on_done((res and res.code == 0) or signal())
+      end)
+    end
+  )
+  if not started then
+    finish(signal())
+  end
+end
+
+---`M.kill_all` without waiting: every server's kill starts at once and
+---`on_done(killed)` runs once, after the last one answered. For the user
+---command; VimLeavePre keeps the synchronous `M.kill_all`.
+---@param force boolean|nil
+---@param on_done fun(killed: integer)
+function M.kill_all_async(force, on_done)
+  local killed, open = 0, 1 -- held until every kill is started, so an early answer cannot finish first
+  local function settle()
+    open = open - 1
+    if open == 0 then
+      on_done(killed)
+    end
+  end
+  for chan, info in pairs(tracked) do
+    if force or info.kill_on_exit then
+      open = open + 1
+      M.kill_tree_async(info.pid, function(ok)
+        if ok then
+          killed = killed + 1
+        end
+        pcall(fn.jobstop, chan)
+        settle()
+      end)
+    end
+  end
+  vim.schedule(settle)
+end
+
 ---The command a terminal channel is running, as a single string.
 ---@param chan integer
 ---@param bufnr integer

@@ -416,6 +416,10 @@ return function(H)
         calls[#calls + 1] = { "devserver.kill_all", force }
         return 1
       end,
+      kill_all_async = function(force, on_done)
+        calls[#calls + 1] = { "devserver.kill_all_async", force }
+        on_done(1)
+      end,
     }
     package.loaded["insights.symbols"] = {
       rebuild_async = function(cb)
@@ -523,7 +527,8 @@ return function(H)
 
       H.eq(#run("Insights devserver list"), 0, "listing tracked servers calls nothing else")
       local kill = run("Insights devserver kill")
-      H.eq(kill[1][1], "devserver.kill_all", "kill kills them")
+      -- the command must not wait for taskkill (~200 ms per server on Windows)
+      H.eq(kill[1][1], "devserver.kill_all_async", "kill kills them, without waiting")
       H.eq(kill[1][2], true, "forced -- the user is asking now")
 
       -- Feature gates: a disabled feature refuses rather than running.

@@ -467,8 +467,10 @@ local function handle_devserver(args)
       notify.info("tracked dev servers:\n" .. table.concat(lines, "\n"))
     end
   elseif sub == "kill" then
-    local killed = devserver.kill_all(true)
-    notify.info(string.format("killed %d dev server%s", killed, killed == 1 and "" or "s"))
+    -- Without waiting: on Windows each kill is a taskkill (~200 ms that froze the editor).
+    devserver.kill_all_async(true, function(killed)
+      notify.info(string.format("killed %d dev server%s", killed, killed == 1 and "" or "s"))
+    end)
   else
     notify.warn(":Insights devserver: unknown subcommand '" .. sub .. "' — use list|kill")
   end
