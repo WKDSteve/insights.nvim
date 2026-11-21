@@ -131,7 +131,10 @@ function M.present(passes, files)
   for _, path in ipairs(files) do
     local ext = path:match("%.([^%./\\]+)$")
     if ext then
+      -- Lower-cased too: the parser names a `FOO.LUA` Lua, and rg's globs may
+      -- list it whatever the case (they do on case-insensitive file systems).
       seen[ext] = true
+      seen[ext:lower()] = true
     end
   end
   local out = {}
@@ -307,19 +310,21 @@ function M.build_async(cfg, cb)
 end
 
 ---@internal
----How long the synchronous wrappers wait for `build_async`: the per-process
----limit rg itself is held to (the passes run side by side), plus slack.
+---How long the synchronous wrappers wait for `build_async`: two stages one
+---after the other (the file listing, then the passes side by side), each held
+---to the per-process limit, plus slack. One limit would give up on a build
+---that is still inside its time on a large tree.
 ---@param cfg InsightsConfig
 ---@return integer
 local function sync_wait_ms(cfg)
   local n = ((cfg.symbols or {}).indexing or {}).timeout_ms
-  return (type(n) == "number" and n > 0 and n or 120000) + 5000
+  return 2 * (type(n) == "number" and n > 0 and n or 120000) + 5000
 end
 
 ---Build a fresh index and wait for it; returns (entries, errors, stats).
 ---
 ---For the synchronous entry points (CLI, Lua API). The passes still run side
----by side, so the wait is one rg round, not one per language.
+---by side, so the wait is the listing plus one rg round, not one per language.
 ---@param cfg InsightsConfig
 ---@return table[], string[], Insights.Symbols.BuildStats
 function M.build(cfg)

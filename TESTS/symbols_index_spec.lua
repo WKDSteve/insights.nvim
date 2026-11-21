@@ -418,6 +418,34 @@ return function(H)
     H.eq(#commands, 2, "and the next request builds afresh instead of waiting forever")
     H.eq(#after, 2, "answering the index")
 
+    -- An upper-case extension still counts for its language (the parser
+    -- lower-cases it too), so its pass is not dropped.
+    local upper = rg_index.passes({ lua = true, go = true })
+    local kept = rg_index.present(upper, { "lua\\APP.LUA", "x/README.md" })
+    H.eq(#kept, 1, "APP.LUA keeps the Lua pass")
+    H.eq(kept[1].language, "lua", "and only that one")
+
+    -- The synchronous build waits long enough for both stages: the listing
+    -- and the passes may each take up to the per-process limit.
+    config.setup({
+      symbols = {
+        languages = only({ lua = true }),
+        indexing = { timeout_ms = 100000 },
+      },
+    })
+    local real_wait, waited = vim.wait, nil
+    vim.wait = function(ms, ...)
+      waited = waited or ms
+      return real_wait(math.min(ms, 2000), ...)
+    end
+    local wait_ok = pcall(rg_index.build, config.get())
+    vim.wait = real_wait
+    H.ok(wait_ok, "the synchronous build runs")
+    H.ok(waited and waited >= 200000, "it waits at least twice the per-process limit")
+    config.setup({
+      symbols = { languages = only({ lua = true, go = true }), cache = { enabled = true } },
+    })
+
     -- Languages without a file in the tree get no pass: the listing decides.
     commands, listings = {}, {}
     files_answer.files = { "lua/only.lua" }
