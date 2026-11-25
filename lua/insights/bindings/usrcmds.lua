@@ -583,21 +583,7 @@ end
 ---filter this way — the old hand-rolled completers above did NOT filter
 ---symbols/cache/devserver candidates by arglead at all, an inconsistency
 ---fixed here, not carried forward).
----@param cands string[]
----@param lead string
----@return string[]
-local function prefix(cands, lead)
-  if lead == "" then
-    return cands
-  end
-  local out = {}
-  for _, c in ipairs(cands) do
-    if c:sub(1, #lead) == lead then
-      out[#out + 1] = c
-    end
-  end
-  return out
-end
+local prefix = require("lib.nvim.bindings.usercmd.prefix")
 
 -- symbols' 4 tokens (scope/type/ui/"rebuild") are order-independent — see the
 -- loop in handle_symbols — so every position offers the same union set.
