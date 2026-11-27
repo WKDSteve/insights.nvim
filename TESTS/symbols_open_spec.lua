@@ -88,6 +88,13 @@ return function(H)
   for _, name in ipairs(replaced_modules) do
     saved[name] = package.loaded[name]
   end
+  -- The pickers themselves: `open` asks whether the asked-for one is installed before it scans.
+  local picker_plugins = { "telescope", "fzf-lua" }
+  local no_picker = not pcall(require, "telescope") and not pcall(require, "fzf-lua")
+  local saved_plugins = {}
+  for _, name in ipairs(picker_plugins) do
+    saved_plugins[name] = package.loaded[name]
+  end
 
   local calls, shown, answered
   local answer = { { filename = "a.lua", lnum = 3, func_type = "local", name = "alpha" } }
@@ -158,6 +165,35 @@ return function(H)
     H.eq(calls[1][3], false, "with no rebuild")
     H.ok(shown, "and the result is shown")
 
+    -- A key bound to a picker that is not installed (`<leader>ps` -> telescope) falls back to the default
+    -- one, said once and decided before the scan, instead of indexing and then only complaining.
+    if no_picker then
+      local warned = {}
+      local real_notify = vim.notify
+      vim.notify = function(msg)
+        warned[#warned + 1] = tostring(msg)
+      end
+      calls, shown = {}, nil
+      open_settled({ ui = "telescope" })
+      vim.notify = real_notify
+      H.eq(shown and shown.ui, "scratch", "telescope missing: the default picker opens the result")
+      H.ok(
+        table.concat(warned, " | "):find("telescope is not installed, using scratch", 1, true),
+        "and it says so"
+      )
+      H.eq(open.usable_ui("fzf"), "scratch", "fzf missing: the same fallback")
+      H.eq(open.usable_ui(nil), "scratch", "no ui asked for: the default")
+    end
+    H.eq(
+      open.usable_ui("something-else"),
+      "something-else",
+      "an unknown name is left to open_picker"
+    )
+
+    for _, name in ipairs(picker_plugins) do
+      package.loaded[name] = {} -- installed, as far as `available` can tell
+    end
+
     calls, shown = {}, nil
     open_settled({ type = "tables", scope = "buffer", ui = "fzf" })
     H.eq(calls[1][1], "get_tables", "type = tables reaches the table scanner")
@@ -211,6 +247,9 @@ return function(H)
 
   for _, name in ipairs(replaced_modules) do
     package.loaded[name] = saved[name]
+  end
+  for _, name in ipairs(picker_plugins) do
+    package.loaded[name] = saved_plugins[name]
   end
 
   if not ok_body then

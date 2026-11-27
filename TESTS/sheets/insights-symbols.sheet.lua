@@ -22,8 +22,13 @@ return {
       note = "the key indexes the three functions of the project",
     },
     {
-      expect = [[_G.noted("telescope.nvim is not installed")]],
-      note = "and names the picker it is bound to, which the suite does not have",
+      expect = [[_G.noted("telescope is not installed, using scratch")]],
+      note = "the key is bound to telescope, which the suite does not have: it says so and falls back to the list",
+    },
+    {
+      wait = [[_G.screentext():find("M.double", 1, true) ~= nil]],
+      timeout = 15000,
+      note = "and the scratch list shows the functions instead of only an error",
     },
     { lua = [[_G.forget()]] },
     { keys = ":Insights symbols<CR>" },

@@ -15,10 +15,13 @@ return function(H)
 
   -- A registered picker is listed, receives the entries and a counted title.
   local got
+  -- Installed only while the dispatch is checked: an asked-for picker that is missing falls back to the default
+  -- (symbols_open_spec), and a registered one must not become the default of the specs that follow.
+  local fake_installed = false
   open.register_ui({
     name = "fake",
     available = function()
-      return false
+      return fake_installed
     end,
     open = function(entries, title)
       got = { n = #entries, title = title }
@@ -47,6 +50,7 @@ return function(H)
     return {}, "no strings"
   end
 
+  fake_installed = true
   local good, err = pcall(function()
     open.open({ scope = "buffer", type = "tables", ui = "fake" })
     deq(
@@ -67,6 +71,7 @@ return function(H)
     deq(got, nil, "an empty scan opens no picker")
   end)
 
+  fake_installed = false
   symbols.get_async, symbols.get_tables, symbols.get_strings =
     saved.get_async, saved.get_tables, saved.get_strings
   ok(good, "dispatch runs without error: " .. tostring(err))

@@ -132,6 +132,25 @@ function M.default_ui()
   return "scratch"
 end
 
+---The picker to open for the requested `ui`: the default one when none is asked for, and, when the asked-for
+---picker is not installed, the default one too, said once. Decided before the scan so a key bound to a picker
+---that is missing does not index the whole project for nothing. An unknown name stays as it is (`open_picker`).
+---@param ui string|nil
+---@return string
+function M.usable_ui(ui)
+  if ui == nil then
+    return M.default_ui()
+  end
+  for _, b in ipairs(UI_BACKENDS) do
+    if b.name == ui and not b.available() then
+      local fallback = M.default_ui()
+      notify.warn(("%s is not installed, using %s"):format(ui, fallback))
+      return fallback
+    end
+  end
+  return ui
+end
+
 ---@internal
 ---@param entries table[]
 ---@param ui string
@@ -159,7 +178,7 @@ function M.open(opts)
 
   local scope = opts.scope or "cwd"
   local sym_type = opts.type or "functions"
-  local ui = opts.ui or M.default_ui()
+  local ui = M.usable_ui(opts.ui)
 
   local symbols = require("insights.symbols")
   -- An unknown type scans functions, as it always has.
