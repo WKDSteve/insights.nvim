@@ -53,17 +53,33 @@ return function(H)
     return table.concat(fields, "\0")
   end
 
+  -- Like the real vim.system: a stream given as a function (lib.nvim's runners
+  -- read stderr that way, bounded) gets the output through it, then EOF.
+  local function stream(opts, res)
+    for _, name in ipairs({ "stdout", "stderr" }) do
+      local handler = opts and opts[name]
+      if type(handler) == "function" then
+        if res[name] and res[name] ~= "" then
+          handler(nil, res[name])
+        end
+        handler(nil, nil)
+      end
+    end
+  end
+
   vim.system = function(cmd, opts, cb)
     seen[#seen + 1] = { cmd = cmd, cwd = opts and opts.cwd }
     local res = answer
     if cb then
       vim.schedule(function()
+        stream(opts, res)
         cb(res)
       end)
       return { wait = function() end }
     end
     return {
       wait = function()
+        stream(opts, res)
         return res
       end,
     }
@@ -155,12 +171,8 @@ return function(H)
     H.contains(no_git_err or "", "git not executable", "and an error saying so")
     H.eq(#seen, 0, "and nothing is spawned")
 
-    -- lib.nvim.git.status_porcelain's blocking form only captures stdout
-    -- (its own doc: "Captured stdout, both on success and failure") --
-    -- stderr, where a real "fatal: not a git repository" would land, never
-    -- reaches this module. Any failure with empty stdout therefore degrades
-    -- to lib.nvim's own generic message, not git's specific one; a real
-    -- non-repo directory (empty stdout on failure) hits exactly this path.
+    -- Since lib.nvim@851e16a a failed status_porcelain reports git's own
+    -- reason (the first stderr line), not the generic "git status failed".
     reset()
     answer = {
       code = 128,
@@ -171,8 +183,8 @@ return function(H)
     H.eq(outside, nil, "outside a repository there is nothing to list")
     H.eq(
       outside_err,
-      "git status failed",
-      "lib.nvim's generic message -- stderr does not reach here"
+      "fatal: not a git repository (or any of the parent directories): .git",
+      "git's own reason, not lib.nvim's generic message"
     )
     H.eq(#seen, 1, "one attempt, no second call to skip")
 

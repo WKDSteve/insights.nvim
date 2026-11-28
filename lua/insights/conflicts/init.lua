@@ -57,10 +57,8 @@ function M.list(cfg)
     return nil, "git not executable: " .. git_cmd
   end
 
-  -- `status_porcelain`'s error string is whatever it captured on STDOUT, not
-  -- git's actual complaint (that went to stderr, which the blocking form
-  -- never sees) -- for a real "not a repository" or similar, this is usually
-  -- lib.nvim's own generic "git status failed", not git's specific message.
+  -- On failure `err` is git's own reason (`fatal: not a git repository ...`,
+  -- lib.nvim@851e16a), shown as is by `report`.
   local status, err = git.status_porcelain({ dir = vim.fn.getcwd() }, git_cmd)
   if not status then
     return nil, err
